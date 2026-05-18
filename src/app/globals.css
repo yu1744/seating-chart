@@ -1,26 +1,145 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Minimalist scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Flat panel layout container */
+.flat-panel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+}
+
+.flat-panel-hover {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.flat-panel-hover:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+}
+
+/* Custom flat animations */
+@keyframes pop-in {
+  0% {
+    transform: scale(0.97);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes shuffle-flat {
+  0%, 100% {
+    background-color: #ffffff;
+    border-color: #e2e8f0;
+  }
+  50% {
+    background-color: #eff6ff;
+    border-color: #3b82f6;
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    border-color: #e2e8f0;
+    background-color: #ffffff;
+  }
+  50% {
+    border-color: #3b82f6;
+    background-color: #f0f7ff;
+  }
+}
+
+.animate-pop-in {
+  animation: pop-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-shuffle-active {
+  animation: shuffle-flat 0.15s ease-in-out infinite;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 1.5s infinite;
+}
+
+/* Perfect Print Layout */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    overflow: visible !important;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-area {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+  
+  .print-grid {
+    grid-template-columns: repeat(var(--print-cols, 6), minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+  
+  .print-desk {
+    background: #f8fafc !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    print-color-adjust: exact;
+  }
+  
+  .print-desk-disabled {
+    background: #ffffff !important;
+    border: 1px dashed #e2e8f0 !important;
+    color: transparent !important;
+    opacity: 0.2 !important;
+  }
+
+  .print-title {
+    display: block !important;
+    text-align: center;
+    font-size: 22px;
+    font-weight: bold;
+    margin-bottom: 20px;
+    color: #000000 !important;
+  }
 }
