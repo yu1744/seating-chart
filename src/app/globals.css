@@ -56,6 +56,15 @@ body {
   }
 }
 
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
 @keyframes shuffle-flat {
   0%, 100% {
     background-color: #ffffff;
@@ -80,6 +89,10 @@ body {
 
 .animate-pop-in {
   animation: pop-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.15s ease-out forwards;
 }
 
 .animate-shuffle-active {

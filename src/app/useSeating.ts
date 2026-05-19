@@ -2,8 +2,31 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 
 export interface SeatingPreset {
-  id: string; name: string; rows: number; cols: number;
-  disabledSeats: string[]; createdAt: string;
+  id: string;
+  name: string;
+  rows: number;
+  cols: number;
+  disabledSeats: string[];
+  createdAt: string;
+}
+
+export interface StudentRoster {
+  id: string;
+  name: string;
+  namesText: string;
+  createdAt: string;
+}
+
+export interface SeatingResult {
+  id: string;
+  name: string;
+  rows: number;
+  cols: number;
+  disabledSeats: string[];
+  seatingLayout: Record<string, string | null>;
+  namesText: string;
+  customTitle: string;
+  createdAt: string;
 }
 
 export function useSeating() {
@@ -13,12 +36,29 @@ export function useSeating() {
   const [seatingLayout, setSeatingLayout] = useState<Record<string, string | null>>({});
   const [disabledSeats, setDisabledSeats] = useState<string[]>([]);
   const [presetName, setPresetName] = useState("");
+  const [rosterName, setRosterName] = useState("");
+  const [resultName, setResultName] = useState("");
   const [savedPresets, setSavedPresets] = useState<SeatingPreset[]>([]);
+  const [savedRosters, setSavedRosters] = useState<StudentRoster[]>([]);
+  const [savedResults, setSavedResults] = useState<SeatingResult[]>([]);
+  const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
+  const [selectedRosterId, setSelectedRosterId] = useState<string | null>(null);
+  const [presetTab, setPresetTab] = useState<"layout" | "roster" | "result">("layout");
+
+  // Interaction/Animation states
   const [isShuffling, setIsShuffling] = useState(false);
   const [draggedSeatKey, setDraggedSeatKey] = useState<string | null>(null);
   const [dragOverSeatKey, setDragOverSeatKey] = useState<string | null>(null);
   const [customTitle, setCustomTitle] = useState("本日の席替え");
   const shuffleTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Custom Modal States
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    message: string;
+    onConfirm: () => void;
+    onCancel?: () => void;
+  } | null>(null);
 
   const parsedNames = useMemo(() => {
     if (!namesText.trim()) return [];
@@ -29,6 +69,7 @@ export function useSeating() {
   const studentCount = parsedNames.length;
   const seatDeficit = studentCount - activeSeatsCount;
 
+  // Grid initialization / adjustment
   useEffect(() => {
     setSeatingLayout(prev => {
       const next: Record<string, string | null> = {};
@@ -45,10 +86,21 @@ export function useSeating() {
     }));
   }, [rows, cols]);
 
+  // Load from local storage
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const s = localStorage.getItem("seating-presets");
-      if (s) try { setSavedPresets(JSON.parse(s)); } catch {}
+      const storedPresets = localStorage.getItem("seating-presets");
+      if (storedPresets) {
+        try { setSavedPresets(JSON.parse(storedPresets)); } catch (e) { console.error(e); }
+      }
+      const storedRosters = localStorage.getItem("seating-rosters");
+      if (storedRosters) {
+        try { setSavedRosters(JSON.parse(storedRosters)); } catch (e) { console.error(e); }
+      }
+      const storedResults = localStorage.getItem("seating-results");
+      if (storedResults) {
+        try { setSavedResults(JSON.parse(storedResults)); } catch (e) { console.error(e); }
+      }
     }
   }, []);
 
@@ -76,8 +128,14 @@ export function useSeating() {
   };
 
   const startShuffle = () => {
-    if (!parsedNames.length) { alert("名前を入力してください。"); return; }
-    if (seatDeficit > 0) { alert(`席が ${seatDeficit} 個不足しています。`); return; }
+    if (!parsedNames.length) {
+      setAlertMessage("配置する名前が入力されていません。名前を入力するか、サンプル入力を押してください。");
+      return;
+    }
+    if (seatDeficit > 0) {
+      setAlertMessage(`有効な席数が足りません。さらに ${seatDeficit} 個の席を増やすか、無効席（通路など）の設定を解除してください。`);
+      return;
+    }
     setIsShuffling(true);
     let cycle = 0;
     const total = 20;
@@ -117,11 +175,16 @@ export function useSeating() {
 
   const fullReset = () => {
     if (isShuffling) return;
-    if (!confirm("サイズ・無効席・名前をすべて初期化しますか？")) return;
-    setRows(6); setCols(6); setDisabledSeats([]); setNamesText("");
-    const e: Record<string, string | null> = {};
-    for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) e[`r${r}-c${c}`] = null;
-    setSeatingLayout(e);
+    setConfirmConfig({
+      message: "席表のサイズ、無効席（通路）の設定、入力された名前、および現在の席配置をすべて初期化します。よろしいですか？",
+      onConfirm: () => {
+        setRows(6); setCols(6); setDisabledSeats([]); setNamesText(""); setSelectedResultId(null); setSelectedRosterId(null);
+        const e: Record<string, string | null> = {};
+        for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) e[`r${r}-c${c}`] = null;
+        setSeatingLayout(e);
+        setConfirmConfig(null);
+      }
+    });
   };
 
   const handleDragStart = (e: React.DragEvent, key: string) => {
@@ -148,8 +211,12 @@ export function useSeating() {
     setDraggedSeatKey(null); setDragOverSeatKey(null);
   };
 
+  // --- PRESET (LAYOUT ONLY) FUNCTIONS ---
   const savePreset = () => {
-    if (!presetName.trim()) { alert("名前を入力してください。"); return; }
+    if (!presetName.trim()) {
+      setAlertMessage("保存するレイアウト名を入力してください。");
+      return;
+    }
     const p: SeatingPreset = {
       id: Date.now().toString(), name: presetName.trim(), rows, cols,
       disabledSeats: [...disabledSeats],
@@ -163,19 +230,184 @@ export function useSeating() {
 
   const loadPreset = (p: SeatingPreset) => {
     if (isShuffling) return;
-    if (!confirm(`「${p.name}」を読み込みますか？現在の配置はリセットされます。`)) return;
-    setRows(p.rows); setCols(p.cols); setDisabledSeats(p.disabledSeats);
-    const f: Record<string, string | null> = {};
-    for (let r = 0; r < p.rows; r++) for (let c = 0; c < p.cols; c++) f[`r${r}-c${c}`] = null;
-    setSeatingLayout(f);
+    setConfirmConfig({
+      message: `レイアウト「${p.name}」を読み込みます。現在の席配置はリセットされます。よろしいですか？`,
+      onConfirm: () => {
+        setRows(p.rows); setCols(p.cols); setDisabledSeats(p.disabledSeats); setSelectedResultId(null);
+        const f: Record<string, string | null> = {};
+        for (let r = 0; r < p.rows; r++) for (let c = 0; c < p.cols; c++) f[`r${r}-c${c}`] = null;
+        setSeatingLayout(f);
+        setConfirmConfig(null);
+      }
+    });
   };
 
-  const deletePreset = (id: string, e: React.MouseEvent) => {
+  const deletePreset = (id: string, name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("削除しますか？")) return;
-    const next = savedPresets.filter(p => p.id !== id);
-    setSavedPresets(next);
-    localStorage.setItem("seating-presets", JSON.stringify(next));
+    setConfirmConfig({
+      message: `保存されたレイアウト「${name}」を完全に削除します。よろしいですか？`,
+      onConfirm: () => {
+        const next = savedPresets.filter(p => p.id !== id);
+        setSavedPresets(next);
+        localStorage.setItem("seating-presets", JSON.stringify(next));
+        setConfirmConfig(null);
+      }
+    });
+  };
+
+  // --- STUDENT ROSTER (名簿) FUNCTIONS ---
+  const saveRoster = () => {
+    if (!rosterName.trim()) {
+      setAlertMessage("保存する名簿名を入力してください。");
+      return;
+    }
+    if (!namesText.trim()) {
+      setAlertMessage("保存する名簿（名前一覧）が空欄です。名前を入力してください。");
+      return;
+    }
+    const r: StudentRoster = {
+      id: Date.now().toString(),
+      name: rosterName.trim(),
+      namesText,
+      createdAt: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    };
+    const next = [r, ...savedRosters];
+    setSavedRosters(next);
+    localStorage.setItem("seating-rosters", JSON.stringify(next));
+    setSelectedRosterId(r.id);
+    setRosterName("");
+  };
+
+  const updateRoster = () => {
+    if (!selectedRosterId) return;
+    const target = savedRosters.find(x => x.id === selectedRosterId);
+    if (!target) return;
+
+    setConfirmConfig({
+      message: `現在の名簿データ（名前一覧）を「${target.name}」に上書き保存（更新）します。よろしいですか？`,
+      onConfirm: () => {
+        const next = savedRosters.map(x => {
+          if (x.id === selectedRosterId) {
+            return {
+              ...x,
+              namesText,
+              createdAt: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+            };
+          }
+          return x;
+        });
+        setSavedRosters(next);
+        localStorage.setItem("seating-rosters", JSON.stringify(next));
+        setConfirmConfig(null);
+      }
+    });
+  };
+
+  const loadRoster = (r: StudentRoster) => {
+    if (isShuffling) return;
+    setConfirmConfig({
+      message: `名簿「${r.name}」を読み込みます。現在の名前入力エリアは上書きされますが、よろしいですか？`,
+      onConfirm: () => {
+        setNamesText(r.namesText);
+        setSelectedRosterId(r.id);
+        setConfirmConfig(null);
+      }
+    });
+  };
+
+  const deleteRoster = (id: string, name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmConfig({
+      message: `保存された名簿「${name}」を完全に削除します。よろしいですか？`,
+      onConfirm: () => {
+        const next = savedRosters.filter(x => x.id !== id);
+        setSavedRosters(next);
+        localStorage.setItem("seating-rosters", JSON.stringify(next));
+        if (selectedRosterId === id) setSelectedRosterId(null);
+        setConfirmConfig(null);
+      }
+    });
+  };
+
+  // --- SEATING RESULT FUNCTIONS ---
+  const saveResult = () => {
+    if (!resultName.trim()) {
+      setAlertMessage("保存する配置結果の名前を入力してください。");
+      return;
+    }
+    const r: SeatingResult = {
+      id: Date.now().toString(),
+      name: resultName.trim(),
+      rows, cols,
+      disabledSeats: [...disabledSeats],
+      seatingLayout: { ...seatingLayout },
+      namesText,
+      customTitle,
+      createdAt: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    };
+    const next = [r, ...savedResults];
+    setSavedResults(next);
+    localStorage.setItem("seating-results", JSON.stringify(next));
+    setSelectedResultId(r.id);
+    setResultName("");
+  };
+
+  const updateResult = () => {
+    if (!selectedResultId) return;
+    const target = savedResults.find(x => x.id === selectedResultId);
+    if (!target) return;
+
+    setConfirmConfig({
+      message: `現在の席配置を「${target.name}」に上書き保存（更新）します。よろしいですか？`,
+      onConfirm: () => {
+        const next = savedResults.map(x => {
+          if (x.id === selectedResultId) {
+            return {
+              ...x,
+              rows, cols,
+              disabledSeats: [...disabledSeats],
+              seatingLayout: { ...seatingLayout },
+              namesText,
+              customTitle,
+              createdAt: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+            };
+          }
+          return x;
+        });
+        setSavedResults(next);
+        localStorage.setItem("seating-results", JSON.stringify(next));
+        setConfirmConfig(null);
+      }
+    });
+  };
+
+  const loadResult = (r: SeatingResult) => {
+    if (isShuffling) return;
+    setConfirmConfig({
+      message: `配置結果「${r.name}」を読み込みます。現在の席表および入力された名前一覧が上書きされます。よろしいですか？`,
+      onConfirm: () => {
+        setRows(r.rows); setCols(r.cols); setDisabledSeats(r.disabledSeats);
+        setNamesText(r.namesText); setSeatingLayout(r.seatingLayout);
+        setCustomTitle(r.customTitle); setSelectedResultId(r.id);
+        // Find if this loaded namesText matches an existing Roster to set selectedRosterId, or just null out.
+        setSelectedRosterId(null);
+        setConfirmConfig(null);
+      }
+    });
+  };
+
+  const deleteResult = (id: string, name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmConfig({
+      message: `保存された配置結果「${name}」を完全に削除します。よろしいですか？`,
+      onConfirm: () => {
+        const next = savedResults.filter(p => p.id !== id);
+        setSavedResults(next);
+        localStorage.setItem("seating-results", JSON.stringify(next));
+        if (selectedResultId === id) setSelectedResultId(null);
+        setConfirmConfig(null);
+      }
+    });
   };
 
   const getAvatarColors = (name: string): { bg: string; text: string } => {
@@ -195,11 +427,20 @@ export function useSeating() {
 
   return {
     rows, setRows, cols, setCols, namesText, setNamesText, seatingLayout, setSeatingLayout,
-    disabledSeats, presetName, setPresetName, savedPresets, isShuffling,
+    disabledSeats, presetName, setPresetName, rosterName, setRosterName, resultName, setResultName,
+    savedPresets, savedRosters, savedResults,
+    selectedResultId, setSelectedResultId, selectedRosterId, setSelectedRosterId,
+    presetTab, setPresetTab, isShuffling,
     draggedSeatKey, dragOverSeatKey, customTitle, setCustomTitle,
     parsedNames, activeSeatsCount, studentCount, seatDeficit,
+    alertMessage, setAlertMessage, confirmConfig, setConfirmConfig,
     toggleSeatDisabled, fillSampleNames, startShuffle, clearLayout, fullReset,
     handleDragStart, handleDragOver, handleDragLeave, handleDrop,
-    savePreset, loadPreset, deletePreset, getAvatarColors, getInitial,
+    savePreset, loadPreset, deletePreset,
+    saveRoster, updateRoster, loadRoster, deleteRoster,
+    saveResult, updateResult, loadResult, deleteResult,
+    getAvatarColors, getInitial,
   };
 }
+
+export type SeatingHook = ReturnType<typeof useSeating>;
