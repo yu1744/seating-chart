@@ -62,7 +62,7 @@ export function useSeating() {
 
   const parsedNames = useMemo(() => {
     if (!namesText.trim()) return [];
-    return namesText.split(/[\n,、\s]+/).map(n => n.trim()).filter(n => n.length > 0);
+    return namesText.split(/\r?\n/).map(n => n.trim()).filter(n => n.length > 0);
   }, [namesText]);
 
   const activeSeatsCount = rows * cols - disabledSeats.length;

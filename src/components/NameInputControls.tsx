@@ -27,7 +27,7 @@ export default function NameInputControls({ s }: NameInputControlsProps) {
         onChange={e => setNamesText(e.target.value)}
         disabled={isShuffling}
         className="w-full h-44 px-3 py-2 bg-white border border-slate-200 rounded text-slate-700 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400 transition-all placeholder:text-slate-400 resize-none font-sans"
-        placeholder={"名前を改行・カンマ・スペース区切りで入力してください。\n例:\n佐藤 健\n鈴木 一郎\n高橋 美咲"}
+        placeholder={"名前を1行に1人ずつ入力してください。\n例:\n佐藤 健\n鈴木 一郎\n高橋 美咲"}
       />
       <div className="flex gap-2 mt-3">
         <button
