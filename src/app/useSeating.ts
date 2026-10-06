@@ -322,7 +322,7 @@ export function useSeating() {
       if (isShuffling) return;
       const vacancies = vacantSeatKeys(board);
       if (!vacancies.length) {
-        notify("空いている席がありません。席を増やすか、通路設定を解除してください。", "error");
+        notify("空いている席がありません。席を増やすか、無効席を解除してください。", "error");
         return;
       }
       assignNameToSeat(name, vacancies[0]);
@@ -354,7 +354,7 @@ export function useSeating() {
         setSelectedSeatKey(key);
         return;
       }
-      // 選択していない状態で空席をクリックしたら、通路として無効化する。
+      // 選択していない状態で空席をクリックしたら、その席を無効化する。
       const p = /^r(\d+)-c(\d+)$/.exec(key);
       if (p) toggleSeatDisabled(parseInt(p[1], 10), parseInt(p[2], 10));
     },
@@ -497,7 +497,7 @@ export function useSeating() {
     }
     if (seatDeficit > 0) {
       setAlertMessage(
-        `有効な席数が ${seatDeficit} 席足りません。席を増やすか、無効席（通路）または固定席の設定を見直してください。`
+        `有効な席数が ${seatDeficit} 席足りません。席を増やすか、無効席または固定席の設定を見直してください。`
       );
       return;
     }
@@ -595,7 +595,7 @@ export function useSeating() {
     confirm({
       title: "すべて初期化",
       message:
-        "席表のサイズ、無効席（通路）と固定席の設定、入力された名前、現在の席配置をすべて初期状態に戻します。保存済みのデータは削除されません。",
+        "席表のサイズ、無効席と固定席の設定、入力された名前、現在の席配置をすべて初期状態に戻します。保存済みのデータは削除されません。",
       confirmLabel: "初期化する",
       tone: "danger",
       onConfirm: () => {

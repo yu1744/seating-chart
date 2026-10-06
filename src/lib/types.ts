@@ -4,13 +4,13 @@ export interface Board {
   cols: number;
   /** 座席キー（`r0-c0` 形式）→ 名前。空席は null。 */
   layout: Record<string, string | null>;
-  /** 通路などに使う無効席のキー一覧。 */
+  /** 使わない席（通路など）＝無効席のキー一覧。 */
   disabled: string[];
   /** シャッフルしても動かさない固定席のキー一覧。 */
   pinned: string[];
 }
 
-/** レイアウト型紙（サイズと通路設定のみ）。 */
+/** レイアウト型紙（サイズと無効席の設定のみ）。 */
 export interface SeatingPreset {
   id: string;
   name: string;

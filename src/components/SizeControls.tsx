@@ -101,7 +101,7 @@ export default function SizeControls({ s }: SizeControlsProps) {
           onChange={setRows}
         />
       </div>
-      <p className="hint mt-3.5">空席をクリックすると通路になります。</p>
+      <p className="hint mt-3.5">空席をクリックすると無効席（通路など）にできます。</p>
     </Panel>
   );
 }

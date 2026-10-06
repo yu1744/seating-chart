@@ -151,14 +151,14 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                 .join(" ");
 
               const title = isDisabled
-                ? "クリックで席に戻す"
+                ? "クリックで有効な席に戻す"
                 : name
                   ? selectedSeatKey
                     ? "クリックで選択中の席と入れ替え"
                     : "クリックで選択 / ドラッグで入れ替え"
                   : selectedSeatKey
                     ? "クリックでここへ移動"
-                    : "クリックで通路にする";
+                    : "クリックで無効席にする（通路など）";
 
               return (
                 <div
@@ -170,7 +170,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                     r,
                     c,
                     name,
-                    isDisabled ? "通路（席なし）" : "空席"
+                    isDisabled ? "無効席" : "空席"
                   )}
                   aria-selected={isSelected}
                   aria-disabled={isDisabled}
@@ -188,7 +188,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                   style={{ cursor: isShuffling ? "wait" : undefined }}
                 >
                   {isDisabled ? (
-                    <span className="seat-mark">通路</span>
+                    <span className="seat-mark">有効化</span>
                   ) : name ? (
                     <>
                       <span className="seat-coord" aria-hidden="true">
@@ -242,7 +242,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                     </>
                   ) : (
                     <span className="seat-mark">
-                      {dragPayload || selectedSeatKey ? "ここへ" : "通路に"}
+                      {dragPayload || selectedSeatKey ? "ここへ" : "無効化"}
                     </span>
                   )}
                 </div>

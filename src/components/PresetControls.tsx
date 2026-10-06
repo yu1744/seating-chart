@@ -11,7 +11,7 @@ interface PresetControlsProps {
 type TabId = "layout" | "roster" | "result" | "backup";
 
 const TABS: { id: TabId; label: string; hint: string }[] = [
-  { id: "layout", label: "レイアウト", hint: "サイズと通路の設定だけを保存します。" },
+  { id: "layout", label: "レイアウト", hint: "サイズと無効席の設定だけを保存します。" },
   { id: "roster", label: "名簿", hint: "名前一覧だけを保存します。" },
   { id: "result", label: "配置", hint: "だれがどこに座るかを含めて保存します。" },
   { id: "backup", label: "データ", hint: "保存データをファイルに書き出し・読み込みします。" },
@@ -183,7 +183,7 @@ export default function PresetControls({ s }: PresetControlsProps) {
             value={presetName}
             onChange={setPresetName}
             onSave={savePreset}
-            placeholder="例: 6×6 通路あり"
+            placeholder="例: 6×6 中央通路"
             disabled={!presetName.trim() || isShuffling}
             label="レイアウト名"
           />
