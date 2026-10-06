@@ -8,8 +8,11 @@ import {
   useSyncExternalStore,
 } from "react";
 import type {
+  Accommodations,
   BackupFile,
   Board,
+  RosterMeta,
+  SeatZone,
   SeatingPreset,
   SeatingResult,
   StudentRoster,
@@ -17,7 +20,6 @@ import type {
 import {
   MAX_DIM,
   MIN_DIM,
-  assignRandomly,
   clampDim,
   createId,
   duplicateNames,
@@ -30,8 +32,9 @@ import {
   parseNames,
   pinnedNames,
   placedNames,
-  sameSeatCount,
+  planSeating,
   seatKey,
+  seatNumberMap,
   shuffleArray,
   shuffleTargetKeys,
   subtractNames,
@@ -40,7 +43,7 @@ import {
 } from "@/lib/seating";
 import {
   downloadTextFile,
-  extractNames,
+  extractStudents,
   fileStamp,
   parseDelimited,
   toCsv,
@@ -90,6 +93,14 @@ const SHUFFLE_FRAMES = 18;
 const SHUFFLE_INTERVAL_MS = 70;
 
 const FALLBACK_BOARD = emptyBoard();
+const EMPTY_ACCOMMODATIONS: Accommodations = {
+  front: [],
+  back: [],
+  left: [],
+  right: [],
+  separate: [],
+};
+const EMPTY_META: RosterMeta = {};
 
 export function useSeating() {
   // localStorage は React の外の状態。描画後に読み直されるため、
@@ -109,9 +120,28 @@ export function useSeating() {
   const [titleOverride, setCustomTitle] = useState<string | null>(null);
   const namesText = namesOverride ?? session?.namesText ?? "";
   const customTitle = titleOverride ?? session?.customTitle ?? DEFAULT_TITLE;
+
+  // 配慮事項と名簿の付加情報も「編集するまでは復元値」の方式に合わせる。
+  const [accommodationsOverride, setAccommodations] = useState<Accommodations | null>(null);
+  const [metaOverride, setRosterMeta] = useState<RosterMeta | null>(null);
+  const accommodations = accommodationsOverride ?? session?.accommodations ?? EMPTY_ACCOMMODATIONS;
+  const rosterMeta = metaOverride ?? session?.meta ?? EMPTY_META;
+
   /** 復元した内容をまだ触っていない状態か。 */
   const isRestored = !!session && history.isPristine && namesOverride === null;
-  const isTouched = !history.isPristine || namesOverride !== null || titleOverride !== null;
+  const isTouched =
+    !history.isPristine ||
+    namesOverride !== null ||
+    titleOverride !== null ||
+    accommodationsOverride !== null ||
+    metaOverride !== null;
+
+  /** 席表の向き。student = 黒板が上（配付用）、teacher = 教室の前から見た向き。 */
+  const [viewMode, setViewMode] = useState<"student" | "teacher">("student");
+  /** 席に通し番号を振って表示する（くじ引き方式で席を指定するときに使う）。 */
+  const [showSeatNumbers, setShowSeatNumbers] = useState(false);
+  /** 発表モード。順番に 1 人ずつ席を明かしていく。 */
+  const [reveal, setReveal] = useState<{ order: string[]; index: number } | null>(null);
 
   const [presetName, setPresetName] = useState("");
   const [rosterName, setRosterName] = useState("");
@@ -188,7 +218,29 @@ export function useSeating() {
     () => subtractNames(parsedNames, currentlyPlaced),
     [parsedNames, currentlyPlaced]
   );
-  /** 席にいるのに名簿から消えている人（名簿を編集したときの取り残し）。 */
+  /** 席の通し番号（有効な席だけに前から順に振る）。 */
+  const seatNumbers = useMemo(() => seatNumberMap(board), [board]);
+
+  /** 名簿にいる人だけに絞った配慮事項（名前を消しても設定自体は残す）。 */
+  const activeAccommodations = useMemo<Accommodations>(() => {
+    const roster = new Set(parsedNames);
+    return {
+      front: accommodations.front.filter(n => roster.has(n)),
+      back: accommodations.back.filter(n => roster.has(n)),
+      left: accommodations.left.filter(n => roster.has(n)),
+      right: accommodations.right.filter(n => roster.has(n)),
+      separate: accommodations.separate.filter(([a, b]) => roster.has(a) && roster.has(b)),
+    };
+  }, [accommodations, parsedNames]);
+
+  const accommodationCount =
+    activeAccommodations.front.length +
+    activeAccommodations.back.length +
+    activeAccommodations.left.length +
+    activeAccommodations.right.length +
+    activeAccommodations.separate.length;
+
+    /** 席にいるのに名簿から消えている人（名簿を編集したときの取り残し）。 */
   const strayNames = useMemo(
     () => subtractNames(currentlyPlaced, parsedNames),
     [currentlyPlaced, parsedNames]
@@ -198,10 +250,17 @@ export function useSeating() {
   useEffect(() => {
     if (!isTouched) return;
     const timer = setTimeout(() => {
-      saveSession({ board, namesText, customTitle, savedAt: nowStamp() });
+      saveSession({
+        board,
+        namesText,
+        customTitle,
+        meta: rosterMeta,
+        accommodations,
+        savedAt: nowStamp(),
+      });
     }, 500);
     return () => clearTimeout(timer);
-  }, [board, namesText, customTitle, isTouched]);
+  }, [board, namesText, customTitle, rosterMeta, accommodations, isTouched]);
 
   useEffect(
     () => () => {
@@ -425,48 +484,181 @@ export function useSeating() {
     notify(`名簿にない ${strayNames.length} 名を席から外しました。`, "success");
   }, [history, isShuffling, notify, strayNames]);
 
+  // --- 発表モード（くじ引きのように 1 人ずつ明かす） ---
+  const startReveal = useCallback(() => {
+    const seats = Object.entries(board.layout)
+      .filter(([, v]) => !!v)
+      .map(([k]) => k);
+    if (!seats.length) {
+      setAlertMessage("発表する席配置がありません。先に席替えを実行してください。");
+      return;
+    }
+    setSelectedSeatKey(null);
+    setReveal({ order: shuffleArray(seats), index: -1 });
+  }, [board.layout]);
+
+  const revealNext = useCallback(() => {
+    setReveal(prev => {
+      if (!prev) return prev;
+      if (prev.index >= prev.order.length - 1) return prev;
+      return { ...prev, index: prev.index + 1 };
+    });
+  }, []);
+
+  const revealAll = useCallback(() => {
+    setReveal(prev => (prev ? { ...prev, index: prev.order.length - 1 } : prev));
+  }, []);
+
+  const endReveal = useCallback(() => setReveal(null), []);
+
+  /** 発表モードで、まだ明かしていない席かどうか。 */
+  const isHidden = useCallback(
+    (key: string) => {
+      if (!reveal) return false;
+      const at = reveal.order.indexOf(key);
+      return at < 0 ? false : at > reveal.index;
+    },
+    [reveal]
+  );
+
+  const revealCurrentKey = reveal && reveal.index >= 0 ? reveal.order[reveal.index] : null;
+  const revealCurrentName = revealCurrentKey ? board.layout[revealCurrentKey] ?? null : null;
+
+  // --- 配慮事項 ---
+  const editAccommodations = useCallback(
+    (update: (prev: Accommodations) => Accommodations) => {
+      setAccommodations(prev => update(prev ?? accommodations));
+    },
+    [accommodations]
+  );
+
+  /** 希望する区画の切り替え。前後どうし・左右どうしは同時に持てない。 */
+  const toggleZone = useCallback(
+    (name: string, zone: SeatZone) => {
+      const opposite: Record<SeatZone, SeatZone> = {
+        front: "back",
+        back: "front",
+        left: "right",
+        right: "left",
+      };
+      editAccommodations(prev => {
+        const other = opposite[zone];
+        const has = prev[zone].includes(name);
+        return {
+          ...prev,
+          [zone]: has ? prev[zone].filter(n => n !== name) : [...prev[zone], name],
+          [other]: prev[other].filter(n => n !== name),
+        } as Accommodations;
+      });
+    },
+    [editAccommodations]
+  );
+
+  const addSeparatePair = useCallback(
+    (a: string, b: string) => {
+      if (!a || !b || a === b) return;
+      const exists = accommodations.separate.some(
+        ([x, y]) => (x === a && y === b) || (x === b && y === a)
+      );
+      if (exists) {
+        notify("その組はすでに登録されています。", "info");
+        return;
+      }
+      editAccommodations(prev => ({ ...prev, separate: [...prev.separate, [a, b]] }));
+      notify(`${a} と ${b} を離す組に追加しました。`, "success");
+    },
+    [accommodations.separate, editAccommodations, notify]
+  );
+
+  const removeSeparatePair = useCallback(
+    (a: string, b: string) => {
+      editAccommodations(prev => ({
+        ...prev,
+        separate: prev.separate.filter(([x, y]) => !(x === a && y === b)),
+      }));
+    },
+    [editAccommodations]
+  );
+
+  const clearAccommodations = useCallback(() => {
+    if (!accommodationCount) return;
+    confirm({
+      title: "配慮事項の消去",
+      message: "前方・後方の希望と、離す組の設定をすべて消去します。",
+      confirmLabel: "消去する",
+      tone: "danger",
+      onConfirm: () => {
+        setAccommodations(EMPTY_ACCOMMODATIONS);
+        notify("配慮事項を消去しました。", "info");
+      },
+    });
+  }, [accommodationCount, confirm, notify]);
+
   // --- 名簿の CSV 連携 ---
   const safeFileName = useCallback(
     (base: string) => (base.replace(/[\\/:*?"<>|]/g, "_").trim() || "席替え"),
     []
   );
 
-  /** 名前一覧を「番号,名前」の CSV で書き出す（Excel でそのまま開ける）。 */
+  /** 名前一覧を CSV で書き出す（Excel でそのまま開ける）。 */
   const exportNamesCsv = useCallback(() => {
     if (!parsedNames.length) {
       setAlertMessage("書き出す名前が入力されていません。");
       return;
     }
+    const hasKana = parsedNames.some(n => rosterMeta[n]?.kana);
+    const hasGender = parsedNames.some(n => rosterMeta[n]?.gender);
+    const header = ["番号", "名前", ...(hasKana ? ["ふりがな"] : []), ...(hasGender ? ["性別"] : [])];
     const rows: (string | number)[][] = [
-      ["番号", "名前"],
-      ...parsedNames.map((n, i) => [i + 1, n]),
+      header,
+      ...parsedNames.map((name, i) => {
+        const meta = rosterMeta[name];
+        const row: (string | number)[] = [meta?.no ?? i + 1, name];
+        if (hasKana) row.push(meta?.kana ?? "");
+        if (hasGender) row.push(meta?.gender === "m" ? "男" : meta?.gender === "f" ? "女" : "");
+        return row;
+      }),
     ];
     const label = savedRosters.find(r => r.id === selectedRosterId)?.name ?? "名簿";
     downloadTextFile(`${safeFileName(label)}-${fileStamp()}.csv`, toCsv(rows));
     notify(`名簿 ${parsedNames.length} 名を CSV に書き出しました。`, "success");
-  }, [notify, parsedNames, safeFileName, savedRosters, selectedRosterId]);
+  }, [notify, parsedNames, rosterMeta, safeFileName, savedRosters, selectedRosterId]);
 
-  /** CSV / TSV / テキストから名前を読み込む。「番号,名前」形式もそのまま扱える。 */
+  /** CSV / TSV / テキストから名簿を読み込む。番号・ふりがな・性別の列も取り込む。 */
   const importNamesFile = useCallback(
     async (file: File) => {
       try {
         const text = await file.text();
-        const names = extractNames(parseDelimited(text));
-        if (!names.length) {
+        const students = extractStudents(parseDelimited(text));
+        if (!students.length) {
           setAlertMessage(
             "ファイルから名前を読み取れませんでした。1 列目に名前、または「名前」「氏名」の見出しがある CSV をお試しください。"
           );
           return;
         }
-        const preview = names.slice(0, 3).join("、");
+        // 出席番号があれば番号順に並べる（名簿らしい順序になる）
+        const ordered = students.every(st => st.no !== undefined)
+          ? [...students].sort((a, b) => (a.no ?? 0) - (b.no ?? 0))
+          : students;
+        const extras = ordered.some(st => st.no !== undefined || st.kana || st.gender);
+        const preview = ordered.slice(0, 3).map(st => st.name).join("、");
         confirm({
           title: "名簿の読み込み",
-          message: `「${file.name}」から ${names.length} 名を読み込みます（${preview}${names.length > 3 ? " …" : ""}）。現在の名前入力欄は上書きされます。`,
+          message: `「${file.name}」から ${ordered.length} 名を読み込みます（${preview}${ordered.length > 3 ? " …" : ""}）。現在の名前入力欄は上書きされます。`,
           confirmLabel: "読み込む",
           onConfirm: () => {
-            setNamesText(names.join("\n"));
+            setNamesText(ordered.map(st => st.name).join("\n"));
+            const meta: RosterMeta = {};
+            for (const st of ordered) {
+              if (st.no === undefined && !st.kana && !st.gender) continue;
+              meta[st.name] = { no: st.no, kana: st.kana, gender: st.gender };
+            }
+            setRosterMeta(meta);
             setSelectedRosterId(null);
-            notify(`${names.length} 名を読み込みました。`, "success");
+            notify(
+              `${ordered.length} 名を読み込みました。${extras ? "（番号・ふりがな等も取り込みました）" : ""}`,
+              "success"
+            );
           },
         });
       } catch {
@@ -546,19 +738,61 @@ export function useSeating() {
       return;
     }
     setSelectedSeatKey(null);
-    const finalBoard = assignRandomly(board, parsedNames, { avoidSame: avoidSameSeat });
+    const { board: finalBoard, report } = planSeating(board, parsedNames, {
+      front: activeAccommodations.front,
+      back: activeAccommodations.back,
+      left: activeAccommodations.left,
+      right: activeAccommodations.right,
+      separate: activeAccommodations.separate,
+      avoidSame: avoidSameSeat,
+    });
 
-    /** 結果の内訳（前と同じ席が残ったかどうか）を一言で伝える。 */
+    /** 結果の内訳を一言で伝える。 */
     const resultMessage = () => {
-      const kept = avoidSameSeat ? sameSeatCount(board, finalBoard) : 0;
-      const pinNote = board.pinned.length ? `・固定 ${board.pinned.length}席` : "";
-      const sameNote = kept > 0 ? `・前と同じ席 ${kept}名` : "";
-      return `${shufflePool.length}名を配置しました${pinNote}${sameNote}`;
+      const notes = [
+        board.pinned.length ? `固定 ${board.pinned.length}席` : "",
+        report.sameSeat > 0 ? `前と同じ席 ${report.sameSeat}名` : "",
+      ].filter(Boolean);
+      return `${shufflePool.length}名を配置しました${notes.length ? `・${notes.join("・")}` : ""}`;
     };
+
+    /** 満たせなかった配慮事項は、黙って捨てずに知らせる。 */
+    const reportUnmet = () => {
+      const lines: string[] = [];
+      if (report.unmetFront.length) {
+        lines.push(`前方にできませんでした: ${report.unmetFront.join("、")}`);
+      }
+      if (report.unmetBack.length) {
+        lines.push(`後方にできませんでした: ${report.unmetBack.join("、")}`);
+      }
+      if (report.unmetLeft.length) {
+        lines.push(`左側にできませんでした: ${report.unmetLeft.join("、")}`);
+      }
+      if (report.unmetRight.length) {
+        lines.push(`右側にできませんでした: ${report.unmetRight.join("、")}`);
+      }
+      if (report.unmetSeparate.length) {
+        lines.push(
+          `離せませんでした: ${report.unmetSeparate.map(([a, b]) => `${a}と${b}`).join("、")}`
+        );
+      }
+      if (!lines.length) return;
+      setAlertMessage(
+        [
+          "配置はできましたが、次の配慮事項は満たせませんでした。",
+          "",
+          ...lines,
+          "",
+          "席を増やす、通路を開く、固定席を見直すなどで解消できる場合があります。",
+        ].join("\n")
+      );
+    };
+
 
     if (prefersReducedMotion()) {
       history.commit(finalBoard);
       notify(resultMessage(), "success");
+      reportUnmet();
       return;
     }
 
@@ -576,6 +810,7 @@ export function useSeating() {
         setIsShuffling(false);
         history.commit(finalBoard);
         notify(resultMessage(), "success");
+        reportUnmet();
         return;
       }
       // 演出用の仮配置。履歴には積まない。
@@ -589,7 +824,17 @@ export function useSeating() {
       });
       setPreviewLayout(frameLayout);
     }, SHUFFLE_INTERVAL_MS);
-  }, [avoidSameSeat, board, history, isShuffling, notify, parsedNames, seatDeficit, shufflePool]);
+  }, [
+    activeAccommodations,
+    avoidSameSeat,
+    board,
+    history,
+    isShuffling,
+    notify,
+    parsedNames,
+    seatDeficit,
+    shufflePool,
+  ]);
 
   /** 入力順（出席番号順）に前から詰めて配置する。 */
   const assignInOrder = useCallback(() => {
@@ -603,19 +848,24 @@ export function useSeating() {
       return;
     }
     const targets = shuffleTargetKeys(board);
+    // 出席番号が分かっていれば番号順、無ければ入力順に前から詰める。
+    const hasNumbers = shufflePool.every(n => typeof rosterMeta[n]?.no === "number");
+    const ordered = hasNumbers
+      ? [...shufflePool].sort((a, b) => (rosterMeta[a].no ?? 0) - (rosterMeta[b].no ?? 0))
+      : shufflePool;
     history.commit(prev => {
       const layout: Record<string, string | null> = {};
       for (const k of Object.keys(prev.layout)) {
         layout[k] = prev.pinned.includes(k) ? prev.layout[k] ?? null : null;
       }
-      shufflePool.forEach((name, i) => {
+      ordered.forEach((name, i) => {
         if (targets[i]) layout[targets[i]] = name;
       });
       return { ...prev, layout };
     });
     setSelectedSeatKey(null);
-    notify("入力順に前から配置しました。", "success");
-  }, [board, history, isShuffling, notify, parsedNames.length, seatDeficit, shufflePool]);
+    notify(hasNumbers ? "出席番号順に配置しました。" : "入力順に前から配置しました。", "success");
+  }, [board, history, isShuffling, notify, parsedNames.length, rosterMeta, seatDeficit, shufflePool]);
 
   const clearLayout = useCallback(() => {
     if (isShuffling) return;
@@ -642,6 +892,9 @@ export function useSeating() {
         history.reset(emptyBoard());
         setNamesText("");
         setCustomTitle(DEFAULT_TITLE);
+        setAccommodations(EMPTY_ACCOMMODATIONS);
+        setRosterMeta(EMPTY_META);
+        setReveal(null);
         setSelectedResultId(null);
         setSelectedRosterId(null);
         setSelectedSeatKey(null);
@@ -787,12 +1040,27 @@ export function useSeating() {
       setAlertMessage("名前一覧が空欄です。名前を入力してから保存してください。");
       return;
     }
-    const roster: StudentRoster = { id: createId(), name, namesText, createdAt: nowStamp() };
+    const roster: StudentRoster = {
+      id: createId(),
+      name,
+      namesText,
+      meta: rosterMeta,
+      accommodations: activeAccommodations,
+      createdAt: nowStamp(),
+    };
     const next = [roster, ...savedRosters];
     reportSave(saveRosters(next), `名簿「${name}」を保存しました（${parsedNames.length}名）。`);
     setSelectedRosterId(roster.id);
     setRosterName("");
-  }, [namesText, parsedNames.length, reportSave, rosterName, savedRosters]);
+  }, [
+    activeAccommodations,
+    namesText,
+    parsedNames.length,
+    reportSave,
+    rosterMeta,
+    rosterName,
+    savedRosters,
+  ]);
 
   const updateRoster = useCallback(() => {
     const target = savedRosters.find(x => x.id === selectedRosterId);
@@ -803,12 +1071,29 @@ export function useSeating() {
       confirmLabel: "上書きする",
       onConfirm: () => {
         const next = savedRosters.map(x =>
-          x.id === selectedRosterId ? { ...x, namesText, createdAt: nowStamp() } : x
+          x.id === selectedRosterId
+            ? {
+                ...x,
+                namesText,
+                meta: rosterMeta,
+                accommodations: activeAccommodations,
+                createdAt: nowStamp(),
+              }
+            : x
         );
         reportSave(saveRosters(next), `名簿「${target.name}」を更新しました。`);
       },
     });
-  }, [confirm, namesText, parsedNames.length, reportSave, savedRosters, selectedRosterId]);
+  }, [
+    activeAccommodations,
+    confirm,
+    namesText,
+    parsedNames.length,
+    reportSave,
+    rosterMeta,
+    savedRosters,
+    selectedRosterId,
+  ]);
 
   const loadRoster = useCallback(
     (r: StudentRoster) => {
@@ -820,6 +1105,8 @@ export function useSeating() {
         confirmLabel: "読み込む",
         onConfirm: () => {
           setNamesText(r.namesText);
+          setRosterMeta(r.meta ?? EMPTY_META);
+          if (r.accommodations) setAccommodations(r.accommodations);
           setSelectedRosterId(r.id);
           notify(`名簿「${r.name}」を読み込みました（${count}名）。`, "success");
         },
@@ -862,6 +1149,8 @@ export function useSeating() {
       pinnedSeats: [...pinnedSeats],
       aisleCols: [...aisleCols],
       aisleRows: [...aisleRows],
+      meta: rosterMeta,
+      accommodations: activeAccommodations,
       seatingLayout: { ...board.layout },
       namesText,
       customTitle,
@@ -872,12 +1161,14 @@ export function useSeating() {
     setSelectedResultId(result.id);
     setResultName("");
   }, [
+    activeAccommodations,
     aisleCols,
     aisleRows,
     board.layout,
     cols,
     customTitle,
     disabledSeats,
+    rosterMeta,
     namesText,
     pinnedSeats,
     reportSave,
@@ -904,6 +1195,8 @@ export function useSeating() {
                 pinnedSeats: [...pinnedSeats],
                 aisleCols: [...aisleCols],
                 aisleRows: [...aisleRows],
+                meta: rosterMeta,
+                accommodations: activeAccommodations,
                 seatingLayout: { ...board.layout },
                 namesText,
                 customTitle,
@@ -915,12 +1208,14 @@ export function useSeating() {
       },
     });
   }, [
+    activeAccommodations,
     aisleCols,
     aisleRows,
     board.layout,
     cols,
     confirm,
     customTitle,
+    rosterMeta,
     disabledSeats,
     namesText,
     pinnedSeats,
@@ -951,6 +1246,8 @@ export function useSeating() {
           );
           setNamesText(r.namesText);
           setCustomTitle(r.customTitle || DEFAULT_TITLE);
+          setRosterMeta(r.meta ?? EMPTY_META);
+          if (r.accommodations) setAccommodations(r.accommodations);
           setSelectedResultId(r.id);
           setSelectedRosterId(null);
           setSelectedSeatKey(null);
@@ -1096,7 +1393,14 @@ export function useSeating() {
         !!target &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
       if (e.key === "Escape") {
-        if (selectedSeatKey) setSelectedSeatKey(null);
+        if (reveal) setReveal(null);
+        else if (selectedSeatKey) setSelectedSeatKey(null);
+        return;
+      }
+      // 発表中は Space / Enter / → で次の人へ
+      if (reveal && !typing && (e.key === " " || e.key === "Enter" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        revealNext();
         return;
       }
       if (typing || !(e.ctrlKey || e.metaKey)) return;
@@ -1111,7 +1415,7 @@ export function useSeating() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [redo, selectedSeatKey, undo]);
+  }, [redo, reveal, revealNext, selectedSeatKey, undo]);
 
   return {
     // 席表の状態
@@ -1130,6 +1434,11 @@ export function useSeating() {
     customTitle,
     setCustomTitle,
     isRestored,
+    viewMode,
+    setViewMode,
+    showSeatNumbers,
+    setShowSeatNumbers,
+    seatNumbers,
 
     // 保存データ
     presetName,
@@ -1157,6 +1466,26 @@ export function useSeating() {
     dragOverSeatKey,
     selectedSeatKey,
     clearSelection,
+
+    // 配慮事項
+    accommodations,
+    activeAccommodations,
+    accommodationCount,
+    toggleZone,
+    addSeparatePair,
+    removeSeparatePair,
+    clearAccommodations,
+    rosterMeta,
+
+    // 発表モード
+    reveal,
+    revealCurrentName,
+    revealCurrentKey,
+    startReveal,
+    revealNext,
+    revealAll,
+    endReveal,
+    isHidden,
 
     // 集計
     parsedNames,

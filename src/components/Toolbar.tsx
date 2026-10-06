@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import type { SeatingHook } from "@/app/useSeating";
-import { OrderIcon, RedoIcon, ShuffleIcon, UndoIcon } from "./ui/Icons";
+import { MegaphoneIcon, OrderIcon, RedoIcon, ShuffleIcon, UndoIcon } from "./ui/Icons";
 
 interface ToolbarProps {
   s: SeatingHook;
@@ -38,6 +38,8 @@ export default function Toolbar({ s }: ToolbarProps) {
     redo,
     canUndo,
     canRedo,
+    placedCount: placed,
+    startReveal,
   } = s;
 
   const status =
@@ -106,6 +108,16 @@ export default function Toolbar({ s }: ToolbarProps) {
         >
           <OrderIcon className="w-3.5 h-3.5" />
           順に配置
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={startReveal}
+          disabled={isShuffling || !placed}
+          title="くじ引きのように 1 人ずつ席を発表します"
+        >
+          <MegaphoneIcon className="w-3.5 h-3.5" />
+          発表
         </button>
         <button type="button" className="btn btn-sm" onClick={clearLayout} disabled={isShuffling}>
           配置クリア

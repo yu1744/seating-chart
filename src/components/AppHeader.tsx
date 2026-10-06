@@ -31,6 +31,37 @@ export default function AppHeader({ s }: AppHeaderProps) {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <div className="seg w-[164px]" role="radiogroup" aria-label="席表の向き">
+            <button
+              type="button"
+              role="radio"
+              className="seg-item"
+              aria-checked={s.viewMode === "student"}
+              onClick={() => s.setViewMode("student")}
+              title="黒板が上。配付・掲示用の向きです"
+            >
+              配付用
+            </button>
+            <button
+              type="button"
+              role="radio"
+              className="seg-item"
+              aria-checked={s.viewMode === "teacher"}
+              onClick={() => s.setViewMode("teacher")}
+              title="教室の前から見た向き（黒板が下、左右が反転）"
+            >
+              前から
+            </button>
+          </div>
+          <button
+            type="button"
+            className="chip-toggle"
+            aria-pressed={s.showSeatNumbers}
+            onClick={() => s.setShowSeatNumbers(v => !v)}
+            title="席に通し番号を振って表示します（くじ引きで席を指定するとき）"
+          >
+            席番号
+          </button>
           <label htmlFor="print-title" className="sr-only">
             印刷時のタイトル
           </label>

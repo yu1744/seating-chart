@@ -4,12 +4,14 @@ import { useSeating } from "./useSeating";
 import AppHeader from "@/components/AppHeader";
 import SizeControls from "@/components/SizeControls";
 import NameInputControls from "@/components/NameInputControls";
+import AccommodationsPanel from "@/components/AccommodationsPanel";
 import PresetControls from "@/components/PresetControls";
 import Toolbar from "@/components/Toolbar";
 import SeatingBoard from "@/components/SeatingBoard";
 import UnassignedNames from "@/components/UnassignedNames";
 import HelpPanel from "@/components/HelpPanel";
 import CustomDialogs from "@/components/CustomDialogs";
+import RevealBar from "@/components/RevealBar";
 import Toasts from "@/components/Toasts";
 
 export default function SeatingArranger() {
@@ -24,6 +26,7 @@ export default function SeatingArranger() {
           <aside className="flex flex-col gap-4 no-print lg:sticky lg:top-6">
             <SizeControls s={s} />
             <NameInputControls s={s} />
+            <AccommodationsPanel s={s} />
             <PresetControls s={s} />
           </aside>
 
@@ -37,6 +40,7 @@ export default function SeatingArranger() {
       </div>
 
       <CustomDialogs s={s} />
+      <RevealBar s={s} />
       <Toasts s={s} />
     </main>
   );

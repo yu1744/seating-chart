@@ -27,11 +27,52 @@ export interface SeatingPreset {
   createdAt: string;
 }
 
-/** 名簿（名前一覧のみ）。 */
+/** 名簿の 1 人分の付加情報（名前そのものは namesText 側が持つ）。 */
+export interface StudentMeta {
+  /** 出席番号。 */
+  no?: number;
+  /** ふりがな。 */
+  kana?: string;
+  /** 性別（男女交互の配置に使う）。 */
+  gender?: "m" | "f";
+}
+
+/** 名前をキーにした付加情報。同姓同名は同じ情報を共有する。 */
+export type RosterMeta = Record<string, StudentMeta>;
+
+/** 希望する区画。前後と左右はそれぞれ排他。 */
+export type SeatZone = "front" | "back" | "left" | "right";
+
+/** 席替えのときに守りたい配慮事項。 */
+export interface Accommodations {
+  /** 前方の席にしたい人（視力・聴力など）。 */
+  front: string[];
+  /** 後方の席にしたい人（身長など）。 */
+  back: string[];
+  /** 左側の席にしたい人（窓側・廊下側は教室によって異なる）。 */
+  left: string[];
+  /** 右側の席にしたい人。 */
+  right: string[];
+  /** 隣・前後にしたくない組。 */
+  separate: [string, string][];
+}
+
+export const emptyAccommodations = (): Accommodations => ({
+  front: [],
+  back: [],
+  left: [],
+  right: [],
+  separate: [],
+});
+
+/** 名簿（名前一覧と、その付加情報・配慮事項）。 */
 export interface StudentRoster {
   id: string;
   name: string;
   namesText: string;
+  /** v3 以降で追加。旧データには存在しない。 */
+  meta?: RosterMeta;
+  accommodations?: Accommodations;
   createdAt: string;
 }
 
@@ -47,6 +88,8 @@ export interface SeatingResult {
   /** v3 以降で追加。旧データには存在しない。 */
   aisleCols?: number[];
   aisleRows?: number[];
+  meta?: RosterMeta;
+  accommodations?: Accommodations;
   seatingLayout: Record<string, string | null>;
   namesText: string;
   customTitle: string;
@@ -58,6 +101,8 @@ export interface SessionSnapshot {
   board: Board;
   namesText: string;
   customTitle: string;
+  meta: RosterMeta;
+  accommodations: Accommodations;
   savedAt: string;
 }
 

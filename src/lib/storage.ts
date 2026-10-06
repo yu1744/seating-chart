@@ -1,6 +1,8 @@
 import type {
+  Accommodations,
   BackupFile,
   Board,
+  RosterMeta,
   SeatingPreset,
   SeatingResult,
   SessionSnapshot,
@@ -25,6 +27,41 @@ const num = (v: unknown, fallback: number): number => (typeof v === "number" && 
 const strArray = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 const numArray = (v: unknown): number[] =>
   Array.isArray(v) ? v.filter((x): x is number => typeof x === "number" && Number.isFinite(x)) : [];
+
+/** 名簿の付加情報（番号・ふりがな・性別）。読めない値は落とす。 */
+const metaOf = (v: unknown): RosterMeta => {
+  if (!isRecord(v)) return {};
+  const out: RosterMeta = {};
+  for (const [name, raw] of Object.entries(v)) {
+    if (!name || !isRecord(raw)) continue;
+    const no = typeof raw.no === "number" && Number.isFinite(raw.no) ? raw.no : undefined;
+    const kana = typeof raw.kana === "string" && raw.kana ? raw.kana : undefined;
+    const gender = raw.gender === "m" || raw.gender === "f" ? raw.gender : undefined;
+    if (no === undefined && kana === undefined && gender === undefined) continue;
+    out[name] = { no, kana, gender };
+  }
+  return out;
+};
+
+/** 配慮事項。組は 2 名ぶん揃っているものだけ採用する。 */
+const accommodationsOf = (v: unknown): Accommodations => {
+  if (!isRecord(v)) return { front: [], back: [], left: [], right: [], separate: [] };
+  const separate: [string, string][] = Array.isArray(v.separate)
+    ? v.separate
+        .filter(
+          (p): p is [string, string] =>
+            Array.isArray(p) && typeof p[0] === "string" && typeof p[1] === "string" && p[0] !== p[1]
+        )
+        .map(p => [p[0], p[1]] as [string, string])
+    : [];
+  return {
+    front: strArray(v.front),
+    back: strArray(v.back),
+    left: strArray(v.left),
+    right: strArray(v.right),
+    separate,
+  };
+};
 
 const layoutOf = (v: unknown): Record<string, string | null> => {
   if (!isRecord(v)) return {};
@@ -133,7 +170,14 @@ const pickRoster = (o: Record<string, unknown>): StudentRoster | null => {
   const id = str(o.id);
   const name = str(o.name);
   if (!id || !name) return null;
-  return { id, name, namesText: str(o.namesText), createdAt: str(o.createdAt) };
+  return {
+    id,
+    name,
+    namesText: str(o.namesText),
+    meta: metaOf(o.meta),
+    accommodations: accommodationsOf(o.accommodations),
+    createdAt: str(o.createdAt),
+  };
 };
 
 const pickResult = (o: Record<string, unknown>): SeatingResult | null => {
@@ -149,6 +193,8 @@ const pickResult = (o: Record<string, unknown>): SeatingResult | null => {
     pinnedSeats: strArray(o.pinnedSeats),
     aisleCols: numArray(o.aisleCols),
     aisleRows: numArray(o.aisleRows),
+    meta: metaOf(o.meta),
+    accommodations: accommodationsOf(o.accommodations),
     seatingLayout: layoutOf(o.seatingLayout),
     namesText: str(o.namesText),
     customTitle: str(o.customTitle, "本日の席替え"),
@@ -200,6 +246,8 @@ const parseSession = (raw: unknown): SessionSnapshot | null => {
     board,
     namesText,
     customTitle: str(raw.customTitle, "本日の席替え"),
+    meta: metaOf(raw.meta),
+    accommodations: accommodationsOf(raw.accommodations),
     savedAt: str(raw.savedAt),
   };
 };

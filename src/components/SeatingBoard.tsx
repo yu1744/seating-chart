@@ -44,6 +44,14 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
     aisleCols,
     aisleRows,
     seatingLayout,
+    viewMode,
+    showSeatNumbers,
+    seatNumbers,
+    activeAccommodations,
+    rosterMeta,
+    reveal,
+    revealCurrentKey,
+    isHidden,
     isShuffling,
     dragPayload,
     dragOverSeatKey,
@@ -65,6 +73,25 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
   const boardRef = useRef<HTMLDivElement>(null);
   const [focusKey, setFocusKey] = useState(seatKey(0, 0));
 
+  // teacher = 教室の前から見た向き。席の位置を 180 度回して見せる（データは変えない）。
+  const flip = viewMode === "teacher";
+  const displayRow = (r: number) => (flip ? rows - 1 - r : r);
+  const displayCol = (c: number) => (flip ? cols - 1 - c : c);
+  const displayAisleCols = flip ? aisleCols.map(b => cols - b) : aisleCols;
+  const displayAisleRows = flip ? aisleRows.map(b => rows - b) : aisleRows;
+
+  /** その席の人に付いている配慮事項（前・後・左・右）。 */
+  const zoneLabel = (name: string | null): string => {
+    if (!name) return "";
+    const marks = [
+      activeAccommodations.front.includes(name) ? "前" : "",
+      activeAccommodations.back.includes(name) ? "後" : "",
+      activeAccommodations.left.includes(name) ? "左" : "",
+      activeAccommodations.right.includes(name) ? "右" : "",
+    ].filter(Boolean);
+    return marks.join("");
+  };
+
   const moveFocus = useCallback(
     (r: number, c: number) => {
       const nr = Math.min(rows - 1, Math.max(0, r));
@@ -82,27 +109,27 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
       switch (e.key) {
         case "ArrowUp":
           e.preventDefault();
-          moveFocus(r - 1, c);
+          moveFocus(r + (flip ? 1 : -1), c);
           break;
         case "ArrowDown":
           e.preventDefault();
-          moveFocus(r + 1, c);
+          moveFocus(r + (flip ? -1 : 1), c);
           break;
         case "ArrowLeft":
           e.preventDefault();
-          moveFocus(r, c - 1);
+          moveFocus(r, c + (flip ? 1 : -1));
           break;
         case "ArrowRight":
           e.preventDefault();
-          moveFocus(r, c + 1);
+          moveFocus(r, c + (flip ? -1 : 1));
           break;
         case "Home":
           e.preventDefault();
-          moveFocus(r, 0);
+          moveFocus(r, flip ? cols - 1 : 0);
           break;
         case "End":
           e.preventDefault();
-          moveFocus(r, cols - 1);
+          moveFocus(r, flip ? 0 : cols - 1);
           break;
         case "Enter":
         case " ":
@@ -127,7 +154,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
           break;
       }
     },
-    [cols, handleSeatActivate, moveFocus, removeFromSeat, seatingLayout, togglePinned]
+    [cols, flip, handleSeatActivate, moveFocus, removeFromSeat, seatingLayout, togglePinned]
   );
 
   const boundaries = (count: number) => Array.from({ length: Math.max(0, count - 1) }, (_, i) => i + 1);
@@ -135,7 +162,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
   return (
     <div className="panel board-panel p-4 print:p-0">
       <div className="board-surface">
-        <div className="blackboard">黒 板</div>
+        {!flip && <div className="blackboard">黒 板</div>}
 
         <div
           ref={boardRef}
@@ -144,8 +171,8 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
           aria-describedby="board-usage"
           className="board-grid"
           style={{
-            gridTemplateColumns: buildTracks(cols, aisleCols, "minmax(0, 1fr)"),
-            gridTemplateRows: buildTracks(rows, aisleRows, "auto"),
+            gridTemplateColumns: buildTracks(cols, displayAisleCols, "minmax(0, 1fr)"),
+            gridTemplateRows: buildTracks(rows, displayAisleRows, "auto"),
             ["--seat-font" as string]: seatFontSize(cols),
           }}
         >
@@ -160,7 +187,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                 aria-pressed={isOpen}
                 aria-label={`${where}の縦の通路`}
                 className={`aisle-toggle is-col no-print ${isOpen ? "is-open" : ""}`}
-                style={{ gridColumn: gutterTrack(i), gridRow: 1 }}
+                style={{ gridColumn: gutterTrack(flip ? cols - i : i), gridRow: 1 }}
                 onClick={() => toggleAisleCol(i)}
                 title={isOpen ? `${where}の通路を閉じる` : `${where}に縦の通路を開く`}
               />
@@ -176,7 +203,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                 aria-pressed={isOpen}
                 aria-label={`${where}の横の通路`}
                 className={`aisle-toggle is-row no-print ${isOpen ? "is-open" : ""}`}
-                style={{ gridColumn: 1, gridRow: gutterTrack(i) }}
+                style={{ gridColumn: 1, gridRow: gutterTrack(flip ? rows - i : i) }}
                 onClick={() => toggleAisleRow(i)}
                 title={isOpen ? `${where}の通路を閉じる` : `${where}に横の通路を開く`}
               />
@@ -189,7 +216,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
               key={`lane-c-${i}`}
               aria-hidden="true"
               className="aisle-lane-v"
-              style={{ gridColumn: gutterTrack(i), gridRow: `${seatTrack(0)} / -1` }}
+              style={{ gridColumn: gutterTrack(flip ? cols - i : i), gridRow: `${seatTrack(0)} / -1` }}
             />
           ))}
           {aisleRows.map(i => (
@@ -197,7 +224,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
               key={`lane-r-${i}`}
               aria-hidden="true"
               className="aisle-lane-h"
-              style={{ gridRow: gutterTrack(i), gridColumn: `${seatTrack(0)} / -1` }}
+              style={{ gridRow: gutterTrack(flip ? rows - i : i), gridColumn: `${seatTrack(0)} / -1` }}
             />
           ))}
 
@@ -212,6 +239,8 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                 const isSelected = selectedSeatKey === key;
                 const isOver = dragOverSeatKey === key;
                 const isDragging = dragPayload?.type === "seat" && dragPayload.key === key;
+                const hidden = isHidden(key);
+                const isCurrent = revealCurrentKey === key;
 
                 const classes = [
                   "seat",
@@ -221,6 +250,8 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                   isDragging ? "is-dragging" : "",
                   isPinned ? "is-pinned" : "",
                   isShuffling && name ? "is-shuffling" : "",
+                  hidden ? "is-hidden-name" : "",
+                  isCurrent ? "is-revealed" : "",
                 ]
                   .filter(Boolean)
                   .join(" ");
@@ -241,7 +272,15 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                     data-seat={key}
                     role="gridcell"
                     tabIndex={focusKey === key ? 0 : -1}
-                    aria-label={`${r + 1}行${c + 1}列 ${name ?? (isDisabled ? "無効席" : "空席")}`}
+                    aria-label={[
+                      `${r + 1}行${c + 1}列`,
+                      showSeatNumbers && seatNumbers[key] ? `席番号${seatNumbers[key]}` : "",
+                      hidden ? "発表前" : (name ?? (isDisabled ? "無効席" : "空席")),
+                      name && !hidden && rosterMeta[name]?.no ? `出席番号${rosterMeta[name].no}` : "",
+                      name && !hidden && zoneLabel(name) ? `配慮${zoneLabel(name)}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
                     aria-selected={isSelected}
                     aria-disabled={isDisabled}
                     draggable={!!name && !isShuffling}
@@ -256,8 +295,8 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                     className={classes}
                     title={title}
                     style={{
-                      gridColumn: seatTrack(c),
-                      gridRow: seatTrack(r),
+                      gridColumn: seatTrack(displayCol(c)),
+                      gridRow: seatTrack(displayRow(r)),
                       cursor: isShuffling ? "wait" : undefined,
                     }}
                   >
@@ -266,25 +305,36 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                     ) : name ? (
                       <>
                         <span className="seat-coord" aria-hidden="true">
-                          {r + 1}-{c + 1}
+                          {showSeatNumbers ? seatNumbers[key] : `${r + 1}-${c + 1}`}
                         </span>
                         {isPinned && (
                           <span className="seat-pin" aria-hidden="true">
                             <PinIcon />
                           </span>
                         )}
-                        <span className="flex items-center gap-1.5 min-w-0">
-                          {cols <= 8 && (
-                            <span
-                              aria-hidden="true"
-                              className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${getAvatarColors(name).bg} ${getAvatarColors(name).text}`}
-                            >
-                              {getInitial(name)}
-                            </span>
-                          )}
-                          <span className="seat-name">{name}</span>
-                        </span>
-                        {!isShuffling && (
+                        {hidden ? (
+                          <span className="seat-hidden" aria-hidden="true">
+                            ？
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            {cols <= 8 && (
+                              <span
+                                aria-hidden="true"
+                                className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${getAvatarColors(name).bg} ${getAvatarColors(name).text}`}
+                              >
+                                {getInitial(name)}
+                              </span>
+                            )}
+                            <span className="seat-name">{name}</span>
+                          </span>
+                        )}
+                        {!hidden && zoneLabel(name) && (
+                          <span className="seat-zone" title={`配慮: ${zoneLabel(name)}`}>
+                            {zoneLabel(name)}
+                          </span>
+                        )}
+                        {!isShuffling && !reveal && (
                           <span className="seat-tools no-print">
                             <button
                               type="button"
@@ -325,6 +375,8 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
             </div>
           ))}
         </div>
+
+        {flip && <div className="blackboard blackboard-bottom">黒 板</div>}
       </div>
 
       <p id="board-usage" className="sr-only">

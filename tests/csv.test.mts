@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { extractNames, parseDelimited, toCsv } from "../src/lib/csv.ts";
+import { extractNames, extractStudents, parseDelimited, toCsv } from "../src/lib/csv.ts";
 
 test("toCsv adds a BOM so Excel reads Japanese correctly", () => {
   const csv = toCsv([["名前"], ["佐藤 健"]]);
@@ -56,4 +56,34 @@ test("extractNames keeps names that merely look numeric-adjacent", () => {
 test("extractNames returns nothing for an empty file", () => {
   assert.deepEqual(extractNames(parseDelimited("")), []);
   assert.deepEqual(extractNames(parseDelimited("\n\n")), []);
+});
+
+test("extractStudents reads 番号・氏名・ふりがな・性別 columns", () => {
+  const rows = parseDelimited(
+    "番号,氏名,ふりがな,性別\n1,佐藤 健,さとう けん,男\n2,高橋 美咲,たかはし みさき,女"
+  );
+  assert.deepEqual(extractStudents(rows), [
+    { name: "佐藤 健", no: 1, kana: "さとう けん", gender: "m" },
+    { name: "高橋 美咲", no: 2, kana: "たかはし みさき", gender: "f" },
+  ]);
+});
+
+test("extractStudents understands 学籍番号 and full-width digits", () => {
+  const rows = parseDelimited("学籍番号,学生名\n１０,鈴木 一郎\n11,渡辺 翔");
+  const students = extractStudents(rows);
+  assert.equal(students[0].no, 10);
+  assert.equal(students[1].no, 11);
+  assert.equal(students[0].name, "鈴木 一郎");
+});
+
+test("extractStudents leaves gender undefined when the value is unknown", () => {
+  const rows = parseDelimited("氏名,性別\n佐藤 健,未回答");
+  assert.deepEqual(extractStudents(rows), [{ name: "佐藤 健", gender: undefined }]);
+});
+
+test("extractStudents falls back to a plain name list without a header", () => {
+  assert.deepEqual(extractStudents(parseDelimited("佐藤 健\n鈴木 一郎")), [
+    { name: "佐藤 健" },
+    { name: "鈴木 一郎" },
+  ]);
 });

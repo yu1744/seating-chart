@@ -365,7 +365,8 @@ summary:focus-visible {
 .seg-item:hover {
   color: var(--text);
 }
-.seg-item[aria-selected="true"] {
+.seg-item[aria-selected="true"],
+.seg-item[aria-checked="true"] {
   background: #fff;
   color: var(--text);
   box-shadow: 0 1px 2px rgba(15, 22, 38, 0.08), 0 0 0 1px rgba(15, 22, 38, 0.04);
@@ -1004,4 +1005,129 @@ summary:focus-visible {
     background-color: #cbd5e1 !important;
     print-color-adjust: exact;
   }
+}
+
+/* ===== 配慮事項 ===== */
+.zone-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #ffffff 0%, #fafbfd 100%);
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.16s, background-color 0.16s, color 0.16s;
+}
+.zone-chip:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+.zone-chip.is-on {
+  border-color: #bcd3ff;
+  background: linear-gradient(180deg, #f5f9ff 0%, #e6efff 100%);
+  color: var(--accent-ink);
+}
+.zone-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.zone-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 配慮のある席に付ける小さな印 */
+.seat-zone {
+  position: absolute;
+  bottom: 4px;
+  right: 5px;
+  font-size: 8.5px;
+  font-weight: 700;
+  color: var(--accent);
+  opacity: 0.75;
+  letter-spacing: 0.02em;
+}
+
+/* ===== 発表モード ===== */
+.seat-hidden {
+  font-size: calc(var(--seat-font, 13px) + 2px);
+  font-weight: 700;
+  color: var(--faint);
+}
+.seat.is-hidden-name {
+  background: linear-gradient(180deg, #f7f9fc 0%, #eef2f8 100%);
+  border-style: dashed;
+}
+.seat.is-revealed {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring), var(--shadow-md);
+  animation: reveal-pop 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes reveal-pop {
+  0% {
+    transform: scale(0.9);
+  }
+  60% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.blackboard-bottom {
+  margin-top: 18px;
+  margin-bottom: 0;
+}
+/* 下に置くときはチョーク受けを上辺に回す */
+.blackboard-bottom::after {
+  top: -4px;
+  bottom: auto;
+  border-radius: 4px 4px 0 0;
+}
+
+/* 発表モードの操作バー（投影しても読めるよう大きめに） */
+.reveal-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  width: min(560px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px) saturate(140%);
+  box-shadow: var(--shadow-lg);
+  animation: slide-up 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.reveal-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--faint);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.reveal-name {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+.reveal-seat {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  margin-top: 2px;
 }

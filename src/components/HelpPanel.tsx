@@ -10,6 +10,7 @@ const ROWS: [string, string][] = [
   ["ピン", "席替えしても動かさない（固定席）"],
   ["Delete キー", "選んだ席から名前を外す"],
   ["Ctrl + Z", "元に戻す / Ctrl + Shift + Z でやり直す"],
+  ["発表", "1人ずつ席を明かす（Space で次へ・Esc で終了）"],
 ];
 
 export default function HelpPanel() {

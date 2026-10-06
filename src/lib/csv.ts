@@ -53,8 +53,60 @@ function pickDelimiter(text: string): string {
   return tabs > commas ? "\t" : ",";
 }
 
-const NAME_HEADER = /^(名前|氏名|生徒名|name|student)/i;
-const NUMBER_HEADER = /^(番号|出席番号|no\.?|id|#)/i;
+const NAME_HEADER = /^(名前|氏名|生徒名|学生名|name|student)/i;
+const NUMBER_HEADER = /^(番号|出席番号|学籍番号|学生番号|no\.?|id|#)/i;
+const KANA_HEADER = /^(ふりがな|フリガナ|よみ|読み|かな|カナ|kana|reading)/i;
+const GENDER_HEADER = /^(性別|gender|sex)/i;
+
+export interface ParsedStudent {
+  name: string;
+  no?: number;
+  kana?: string;
+  gender?: "m" | "f";
+}
+
+const parseGender = (v: string): "m" | "f" | undefined => {
+  const t = v.trim();
+  if (/^(男|男子|男性|m|male|boy)$/i.test(t)) return "m";
+  if (/^(女|女子|女性|f|female|girl)$/i.test(t)) return "f";
+  return undefined;
+};
+
+const parseNo = (v: string): number | undefined => {
+  const t = v.trim().replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+  if (!/^\d{1,4}$/.test(t)) return undefined;
+  return parseInt(t, 10);
+};
+
+/**
+ * 表から名前と付加情報（出席番号・ふりがな・性別）を取り出す。
+ * 見出し行があればその列を使い、無ければ「番号+名前」の形を推測する。
+ */
+export function extractStudents(rows: string[][]): ParsedStudent[] {
+  if (!rows.length) return [];
+  const [first, ...rest] = rows;
+  const nameCol = first.findIndex(c => NAME_HEADER.test(c));
+
+  if (nameCol >= 0) {
+    const noCol = first.findIndex(c => NUMBER_HEADER.test(c));
+    const kanaCol = first.findIndex(c => KANA_HEADER.test(c));
+    const genderCol = first.findIndex(c => GENDER_HEADER.test(c));
+    return rest
+      .map(r => {
+        const name = (r[nameCol] ?? "").trim();
+        if (!name) return null;
+        const student: ParsedStudent = { name };
+        if (noCol >= 0) student.no = parseNo(r[noCol] ?? "");
+        if (kanaCol >= 0 && (r[kanaCol] ?? "").trim()) student.kana = r[kanaCol].trim();
+        if (genderCol >= 0) student.gender = parseGender(r[genderCol] ?? "");
+        return student;
+      })
+      .filter((s): s is ParsedStudent => !!s);
+  }
+
+  // 見出しが無い場合は、名前の列だけを拾う（従来どおりの推測）。
+  return extractNames(rows).map(name => ({ name }));
+}
 
 /**
  * 表から名前の列だけを取り出す。

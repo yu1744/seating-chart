@@ -157,3 +157,25 @@ export const SeatIcon = (p: IconProps) => (
     <path d="M4 18h16M8 21v-3M16 21v-3" />
   </Icon>
 );
+
+export const HeartIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 20s-7-4.4-7-9.3A4 4 0 0 1 12 8a4 4 0 0 1 7 2.7C19 15.6 12 20 12 20Z" />
+  </Icon>
+);
+
+export const MegaphoneIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1Z" />
+    <path d="M16 9a4 4 0 0 1 0 6" />
+    <path d="M19 6.5a8 8 0 0 1 0 11" />
+  </Icon>
+);
+
+export const FlipIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 3v18" />
+    <path d="M7 8 4 11l3 3" />
+    <path d="M17 16l3-3-3-3" />
+  </Icon>
+);
