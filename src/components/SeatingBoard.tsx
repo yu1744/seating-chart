@@ -66,8 +66,6 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
     handleDragLeave,
     handleDragEnd,
     handleDrop,
-    getAvatarColors,
-    getInitial,
   } = s;
 
   const boardRef = useRef<HTMLDivElement>(null);
@@ -317,17 +315,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                             ？
                           </span>
                         ) : (
-                          <span className="flex items-center gap-1.5 min-w-0">
-                            {cols <= 8 && (
-                              <span
-                                aria-hidden="true"
-                                className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${getAvatarColors(name).bg} ${getAvatarColors(name).text}`}
-                              >
-                                {getInitial(name)}
-                              </span>
-                            )}
-                            <span className="seat-name">{name}</span>
-                          </span>
+                          <span className="seat-name">{name}</span>
                         )}
                         {!hidden && zoneLabel(name) && (
                           <span className="seat-zone" title={`配慮: ${zoneLabel(name)}`}>

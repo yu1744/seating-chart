@@ -16,8 +16,6 @@ export default function UnassignedNames({ s }: UnassignedNamesProps) {
     handleNameDragStart,
     handleDragEnd,
     removeStrayNames,
-    getAvatarColors,
-    getInitial,
     isShuffling,
   } = s;
 
@@ -33,29 +31,20 @@ export default function UnassignedNames({ s }: UnassignedNamesProps) {
       {unassignedNames.length > 0 ? (
         <>
           <div className="flex flex-wrap gap-1.5">
-            {unassignedNames.map((name, i) => {
-              const av = getAvatarColors(name);
-              return (
-                <button
-                  key={`${name}-${i}`}
-                  type="button"
-                  className="chip-btn"
-                  draggable={!isShuffling}
-                  onDragStart={e => handleNameDragStart(e, name)}
-                  onDragEnd={handleDragEnd}
-                  onClick={() => placeNameInFirstVacancy(name)}
-                  title="クリックで空席に配置 / 席へドラッグ"
-                >
-                  <span
-                    aria-hidden="true"
-                    className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${av.bg} ${av.text}`}
-                  >
-                    {getInitial(name)}
-                  </span>
-                  {name}
-                </button>
-              );
-            })}
+            {unassignedNames.map((name, i) => (
+              <button
+                key={`${name}-${i}`}
+                type="button"
+                className="chip-btn"
+                draggable={!isShuffling}
+                onDragStart={e => handleNameDragStart(e, name)}
+                onDragEnd={handleDragEnd}
+                onClick={() => placeNameInFirstVacancy(name)}
+                title="クリックで空席に配置 / 席へドラッグ"
+              >
+                {name}
+              </button>
+            ))}
           </div>
           <p className="hint mt-2.5">クリックで空席へ、ドラッグで好きな席へ配置できます。</p>
         </>

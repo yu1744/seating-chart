@@ -539,25 +539,6 @@ export function sameSeatCount(before: Board, after: Board): number {
   return n;
 }
 
-const AVATAR_COLORS = [
-  { bg: "bg-blue-100", text: "text-blue-700" },
-  { bg: "bg-indigo-100", text: "text-indigo-700" },
-  { bg: "bg-emerald-100", text: "text-emerald-700" },
-  { bg: "bg-violet-100", text: "text-violet-700" },
-  { bg: "bg-amber-100", text: "text-amber-700" },
-  { bg: "bg-sky-100", text: "text-sky-700" },
-  { bg: "bg-rose-100", text: "text-rose-700" },
-] as const;
-
-export function getAvatarColors(name: string): { bg: string; text: string } {
-  if (!name) return { bg: "bg-slate-100", text: "text-slate-700" };
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
-  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
-}
-
-export const getInitial = (name: string) => (name ? name.replace(/\s+/g, "").charAt(0) : "");
-
 /** 保存日時の表示。ISO 文字列も、旧データの整形済み文字列もそのまま扱える。 */
 export function formatStamp(value: string): string {
   if (!value) return "";

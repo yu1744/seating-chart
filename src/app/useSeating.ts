@@ -25,8 +25,6 @@ import {
   duplicateNames,
   emptyBoard,
   formatStamp,
-  getAvatarColors,
-  getInitial,
   normalizeBoard,
   nowStamp,
   parseNames,
@@ -1561,8 +1559,6 @@ export function useSeating() {
     canRedo: history.canRedo && !isShuffling,
 
     // 表示ヘルパー
-    getAvatarColors,
-    getInitial,
     formatStamp,
     MIN_DIM,
     MAX_DIM,
