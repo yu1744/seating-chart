@@ -190,7 +190,7 @@ export default function SizeControls({ s }: SizeControlsProps) {
       </div>
 
       <p className="hint mt-3.5">
-        通路は席の数を変えません。席表の上や左の目印からも開閉できます。使わないマスは空席をクリックして無効席に。
+        通路は席の数を変えません。席表の上・左の ▾ からも開閉できます。使わないマスは空席をクリックして無効席に。
       </p>
     </Panel>
   );

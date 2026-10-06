@@ -323,8 +323,8 @@ body {
 .board-panel {
   --seat-gap: 8px;
   --aisle: 26px;
-  --ctl: 14px;
-  --ctl-gap: 4px;
+  --ctl: 18px;
+  --ctl-gap: 5px;
 }
 
 .board-grid {
@@ -337,57 +337,66 @@ body {
   margin-left: calc(var(--ctl) + var(--ctl-gap));
 }
 
-/* 通路の開閉ボタン（席の間に置く控えめな目印） */
+/*
+ * 通路の開閉ボタン。閉じているときは「ここに通路を開く」向きの三角、
+ * 開いているときは向きを反転させて「閉じる」ことが分かるようにする。
+ */
 .aisle-toggle {
   justify-self: center;
   align-self: center;
-  width: 12px;
-  height: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 0;
   border: 0;
-  border-radius: 99px;
+  border-radius: var(--radius-sm);
   background: transparent;
   cursor: pointer;
-  position: relative;
+  transition: background-color 0.15s;
+}
+.aisle-toggle.is-col {
+  width: 24px;
+  height: 16px;
+}
+.aisle-toggle.is-row {
+  width: 16px;
+  height: 24px;
+}
+.aisle-toggle:hover {
+  background: var(--accent-soft);
 }
 .aisle-toggle::before {
   content: "";
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  border-radius: 99px;
-  background: var(--line-strong);
-  transition: background-color 0.15s, width 0.15s, height 0.15s;
+  display: block;
+  transition: border-color 0.15s;
 }
+
+/* 列の間（席表の上） 閉: ▼ ／ 開: ▲ */
 .aisle-toggle.is-col::before {
-  width: 3px;
-  height: 3px;
-}
-.aisle-toggle.is-row::before {
-  width: 3px;
-  height: 3px;
-}
-.aisle-toggle:hover::before {
-  background: var(--accent);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--faint);
 }
 .aisle-toggle.is-col:hover::before {
-  width: 3px;
-  height: 11px;
-}
-.aisle-toggle.is-row:hover::before {
-  width: 11px;
-  height: 3px;
-}
-.aisle-toggle.is-open::before {
-  background: var(--accent);
+  border-top-color: var(--accent);
 }
 .aisle-toggle.is-col.is-open::before {
-  width: 3px;
-  height: 11px;
+  border-top: 0;
+  border-bottom: 6px solid var(--accent);
+}
+
+/* 行の間（席表の左） 閉: ▶ ／ 開: ◀ */
+.aisle-toggle.is-row::before {
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid var(--faint);
+}
+.aisle-toggle.is-row:hover::before {
+  border-left-color: var(--accent);
 }
 .aisle-toggle.is-row.is-open::before {
-  width: 11px;
-  height: 3px;
+  border-left: 0;
+  border-right: 6px solid var(--accent);
 }
 
 /* サイズ欄の通路トグル（キーボードでも操作できる通路の開閉） */
