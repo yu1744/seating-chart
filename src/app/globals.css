@@ -449,7 +449,9 @@ body {
   transition: opacity 0.12s;
 }
 .seat:hover .seat-tools,
-.seat:focus-within .seat-tools {
+.seat:focus-within .seat-tools,
+/* タップ操作の端末ではホバーがないため、選択中の席には常に出す。 */
+.seat.is-selected .seat-tools {
   opacity: 1;
 }
 .seat-tool {

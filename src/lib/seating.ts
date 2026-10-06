@@ -131,8 +131,17 @@ export const pinnedNames = (board: Board): string[] =>
 export const vacantSeatKeys = (board: Board): string[] =>
   allSeatKeys(board.rows, board.cols).filter(k => !board.disabled.includes(k) && !board.layout[k]);
 
+export interface AssignOptions {
+  /** できるだけ前回と同じ席にならないようにする。 */
+  avoidSame?: boolean;
+}
+
 /** 固定席を保ったまま、残りの名前をランダムに配置した新しい board を返す。 */
-export function assignRandomly(board: Board, names: readonly string[]): Board {
+export function assignRandomly(
+  board: Board,
+  names: readonly string[],
+  options: AssignOptions = {}
+): Board {
   const targets = shuffleTargetKeys(board);
   const pool = shuffleArray(subtractNames(names, pinnedNames(board)));
   const layout: Record<string, string | null> = {};
@@ -144,7 +153,40 @@ export function assignRandomly(board: Board, names: readonly string[]): Board {
     const k = slots[i];
     if (k) layout[k] = name;
   });
+  if (options.avoidSame) repairSameSeats(layout, targets, board.layout);
   return { ...board, layout };
+}
+
+/**
+ * 前回と同じ席になってしまった人を、別の席の人と入れ替えて解消する。
+ * 席数が少ない場合など解消しきれないこともあるため、残りは呼び出し側で伝える。
+ */
+function repairSameSeats(
+  layout: Record<string, string | null>,
+  targets: readonly string[],
+  before: Record<string, string | null>
+) {
+  for (let pass = 0; pass < 8; pass++) {
+    const stuck = targets.filter(k => layout[k] && layout[k] === before[k]);
+    if (!stuck.length) return;
+    let swapped = false;
+    for (const k of stuck) {
+      if (layout[k] !== before[k]) continue; // 直前の入れ替えで解消済み
+      for (const t of shuffleArray(targets)) {
+        if (t === k) continue;
+        const a = layout[k];
+        const b = layout[t];
+        // 入れ替えによって、どちらの席も「前回と同じ」にならない組み合わせだけ選ぶ。
+        if (a === before[t]) continue;
+        if (b !== null && b === before[k]) continue;
+        layout[k] = b;
+        layout[t] = a;
+        swapped = true;
+        break;
+      }
+    }
+    if (!swapped) return;
+  }
 }
 
 /** 席替え前後で席が変わらなかった人数（連続実行時の体感に使う）。 */

@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 席替えシステム
 
-## Getting Started
+教室の席表をつくり、名前をランダムに配置して印刷できる Web アプリです。
+データはすべてブラウザ内（localStorage）に保存され、サーバーには何も送信しません。
 
-First, run the development server:
+## 使い方
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev      # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| コマンド | 内容 |
+| --- | --- |
+| `npm run dev` | 開発サーバー |
+| `npm run build` | 本番ビルド |
+| `npm run lint` | ESLint |
+| `npm test` | ロジックの自動テスト（node:test） |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 主な機能
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **席表の作成** — 1〜12 の範囲で行・列を指定。空席をクリックすると通路（無効席）になります。
+- **席替え** — 偏りのない乱数で配置。「前と同じ席を避ける」をオンにすると、前回と同じ席に座る人を減らします。
+- **固定席** — ピンを付けた席の人は、席替えしても動きません。
+- **手動調整** — ドラッグ＆ドロップ、またはクリック（タップ）で選んでから別の席をクリックして入れ替え。
+- **未配置の名前** — 席に着いていない人を一覧表示。クリックで空席へ、ドラッグで任意の席へ配置できます。
+- **元に戻す / やり直す** — `Ctrl+Z` / `Ctrl+Shift+Z`（最大 60 手）。
+- **保存** — レイアウト（サイズ・通路）、名簿（名前一覧）、配置結果（だれがどこに座るか）を名前を付けて保存。
+- **CSV / バックアップ** — 名簿の CSV 読み込み・書き出し、席表の CSV 書き出し、保存データの JSON バックアップと復元。
+- **印刷 / PDF** — 席表のみを A4 に収めて印刷します。
+- **自動保存** — 作業内容は自動保存され、ページを閉じても次回そのまま復元されます。
 
-## Learn More
+### キーボード操作
 
-To learn more about Next.js, take a look at the following resources:
+| キー | 動作 |
+| --- | --- |
+| 矢印キー | 席の移動（席表内） |
+| Enter / Space | 席を選択 → もう一度別の席で入れ替え |
+| Delete / Backspace | 選んだ席から名前を外す |
+| P | 固定席の切り替え |
+| Esc | 選択解除 / ダイアログを閉じる |
+| Ctrl+Z / Ctrl+Shift+Z | 元に戻す / やり直す |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 名簿 CSV の形式
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+次のいずれでも読み込めます（UTF-8、タブ区切りや Excel からのコピーにも対応）。
 
-## Deploy on Vercel
+```csv
+名前
+佐藤 健
+鈴木 一郎
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```csv
+番号,名前
+1,佐藤 健
+2,鈴木 一郎
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+書き出しは `番号,名前` の 2 列、BOM 付き UTF-8 なので Excel でそのまま開けます。
+
+## 構成
+
+```
+src/
+  app/
+    page.tsx          画面の組み立て
+    useSeating.ts     状態と操作をまとめたフック
+    globals.css       デザイントークンと共通スタイル・印刷スタイル
+  components/         UI（ui/ は共通部品）
+  lib/
+    seating.ts        席表のロジック（純粋関数）
+    storage.ts        localStorage の読み書きと検証
+    csv.ts            CSV の入出力
+    useHistoryState.ts 元に戻す / やり直す
+tests/                node:test によるロジックのテスト
+```
+
+状態は `useSeating` に集約し、`Board`（行数・列数・配置・無効席・固定席）を 1 単位として
+履歴に積むことで「元に戻す」を実現しています。保存データは `useSyncExternalStore` で
+localStorage を購読しているため、別タブでの変更も反映されます。
+
+## 技術
+
+Next.js 16（App Router）/ React 19 / TypeScript / Tailwind CSS v4。
+`AGENTS.md` のとおり、Next.js の API は `node_modules/next/dist/docs/` の同梱ドキュメントを参照しています。

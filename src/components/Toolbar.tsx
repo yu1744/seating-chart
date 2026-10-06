@@ -27,6 +27,8 @@ export default function Toolbar({ s }: ToolbarProps) {
     pinnedCount,
     seatDeficit,
     unassignedNames,
+    avoidSameSeat,
+    setAvoidSameSeat,
     isShuffling,
     clearLayout,
     fullReset,
@@ -64,6 +66,19 @@ export default function Toolbar({ s }: ToolbarProps) {
       </div>
 
       <div className="flex items-center gap-1.5 ml-auto">
+        <label
+          className="flex items-center gap-1.5 mr-1 text-[11.5px] font-medium text-[var(--muted)] cursor-pointer select-none"
+          title="席替え後に前と同じ席になる人を、できるだけ減らします"
+        >
+          <input
+            type="checkbox"
+            checked={avoidSameSeat}
+            onChange={e => setAvoidSameSeat(e.target.checked)}
+            disabled={isShuffling}
+            className="accent-[var(--accent)] cursor-pointer"
+          />
+          前と同じ席を避ける
+        </label>
         <button
           type="button"
           className="btn-icon"

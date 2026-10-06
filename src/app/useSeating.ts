@@ -30,6 +30,7 @@ import {
   parseNames,
   pinnedNames,
   placedNames,
+  sameSeatCount,
   seatKey,
   shuffleArray,
   shuffleTargetKeys,
@@ -119,6 +120,7 @@ export function useSeating() {
   const [presetTab, setPresetTab] = useState<"layout" | "roster" | "result" | "backup">("layout");
 
   // 操作・演出の状態
+  const [avoidSameSeat, setAvoidSameSeat] = useState(true);
   const [isShuffling, setIsShuffling] = useState(false);
   const [previewLayout, setPreviewLayout] = useState<Record<string, string | null> | null>(null);
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
@@ -504,11 +506,19 @@ export function useSeating() {
       return;
     }
     setSelectedSeatKey(null);
-    const finalBoard = assignRandomly(board, parsedNames);
+    const finalBoard = assignRandomly(board, parsedNames, { avoidSame: avoidSameSeat });
+
+    /** 結果の内訳（前と同じ席が残ったかどうか）を一言で伝える。 */
+    const resultMessage = () => {
+      const kept = avoidSameSeat ? sameSeatCount(board, finalBoard) : 0;
+      const pinNote = board.pinned.length ? `・固定 ${board.pinned.length}席` : "";
+      const sameNote = kept > 0 ? `・前と同じ席 ${kept}名` : "";
+      return `${shufflePool.length}名を配置しました${pinNote}${sameNote}`;
+    };
 
     if (prefersReducedMotion()) {
       history.commit(finalBoard);
-      notify(`${board.pinned.length ? "固定席を保ったまま " : ""}${shufflePool.length} 名を配置しました。`, "success");
+      notify(resultMessage(), "success");
       return;
     }
 
@@ -525,10 +535,7 @@ export function useSeating() {
         setPreviewLayout(null);
         setIsShuffling(false);
         history.commit(finalBoard);
-        notify(
-          `${pool.length} 名を配置しました。${board.pinned.length ? `（固定席 ${board.pinned.length} 席はそのまま）` : ""}`,
-          "success"
-        );
+        notify(resultMessage(), "success");
         return;
       }
       // 演出用の仮配置。履歴には積まない。
@@ -542,7 +549,7 @@ export function useSeating() {
       });
       setPreviewLayout(frameLayout);
     }, SHUFFLE_INTERVAL_MS);
-  }, [board, history, isShuffling, notify, parsedNames, seatDeficit, shufflePool]);
+  }, [avoidSameSeat, board, history, isShuffling, notify, parsedNames, seatDeficit, shufflePool]);
 
   /** 入力順（出席番号順）に前から詰めて配置する。 */
   const assignInOrder = useCallback(() => {
@@ -1087,6 +1094,8 @@ export function useSeating() {
     setPresetTab,
 
     // 操作の状態
+    avoidSameSeat,
+    setAvoidSameSeat,
     isShuffling,
     dragPayload,
     dragOverSeatKey,

@@ -120,6 +120,40 @@ test("assignRandomly spreads people around rather than always filling the same s
   assert.ok(hits.size >= 8, `9 席のうち ${hits.size} 席にしか座っていません`);
 });
 
+test("avoidSame keeps nobody in the seat they already had", () => {
+  const names = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
+  let board = assignRandomly(boardWith({}), names);
+  for (let i = 0; i < 30; i++) {
+    const before = board;
+    board = assignRandomly(before, names, { avoidSame: true });
+    const stuck = Object.entries(board.layout).filter(
+      ([k, v]) => v && v === before.layout[k]
+    );
+    assert.deepEqual(stuck, [], `同じ席に残った人がいます: ${JSON.stringify(stuck)}`);
+    assert.deepEqual(Object.values(board.layout).filter(Boolean).sort(), [...names].sort());
+  }
+});
+
+test("avoidSame still seats everyone when a full swap is impossible", () => {
+  // 1 人 1 席では避けようがない。落ちずに、人を失わないことだけを保証する。
+  const single = normalizeBoard({ ...emptyBoard(1, 1), layout: { "r0-c0": "A" } });
+  const next = assignRandomly(single, ["A"], { avoidSame: true });
+  assert.equal(next.layout["r0-c0"], "A");
+});
+
+test("avoidSame leaves pinned people alone even though they keep their seat", () => {
+  const pinned = seatKey(1, 1);
+  const base = normalizeBoard({
+    ...emptyBoard(3, 3),
+    layout: { [pinned]: "固定さん", "r0-c0": "A", "r0-c1": "B" },
+    pinned: [pinned],
+  });
+  const names = ["固定さん", "A", "B"];
+  const next = assignRandomly(base, names, { avoidSame: true });
+  assert.equal(next.layout[pinned], "固定さん");
+  assert.deepEqual(Object.values(next.layout).filter(Boolean).sort(), [...names].sort());
+});
+
 test("vacantSeatKeys lists only seats that are empty and enabled", () => {
   const board = boardWith({ layout: { "r0-c0": "A" }, disabled: ["r0-c1"] });
   const vacant = vacantSeatKeys(board);
