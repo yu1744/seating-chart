@@ -17,18 +17,40 @@ function seatFontSize(cols: number): string {
   return "10px";
 }
 
+/**
+ * 席と席の間（境界）そのものをグリッドのトラックにしている。
+ * 通常は席間の余白、通路が開いているときは広い余白になり、席の数は変わらない。
+ * 先頭には通路ボタンを置くための細い操作トラックを 1 本だけ確保する。
+ */
+const SEAT_TRACK_OFFSET = 3;
+const seatTrack = (index: number) => SEAT_TRACK_OFFSET + index * 2;
+const gutterTrack = (boundary: number) => 2 + boundary * 2;
+
+function buildTracks(count: number, aisles: readonly number[], seatSize: string): string {
+  const tracks = ["var(--ctl)", "var(--ctl-gap)"];
+  for (let i = 0; i < count; i++) {
+    if (i > 0) tracks.push(aisles.includes(i) ? "var(--aisle)" : "var(--seat-gap)");
+    tracks.push(seatSize);
+  }
+  return tracks.join(" ");
+}
+
 export default function SeatingBoard({ s }: SeatingBoardProps) {
   const {
     rows,
     cols,
     disabledSeats,
     pinnedSeats,
+    aisleCols,
+    aisleRows,
     seatingLayout,
     isShuffling,
     dragPayload,
     dragOverSeatKey,
     selectedSeatKey,
     handleSeatActivate,
+    toggleAisleCol,
+    toggleAisleRow,
     togglePinned,
     removeFromSeat,
     handleDragStart,
@@ -108,12 +130,11 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
     [cols, handleSeatActivate, moveFocus, removeFromSeat, seatingLayout, togglePinned]
   );
 
-  const seatLabel = (r: number, c: number, name: string | null, state: string) =>
-    `${r + 1}行${c + 1}列 ${name ?? state}`;
+  const boundaries = (count: number) => Array.from({ length: Math.max(0, count - 1) }, (_, i) => i + 1);
 
   return (
-    <div className="panel p-5 print:p-0">
-      <div className="blackboard mb-5">黒 板</div>
+    <div className="panel board-panel p-5 print:p-0">
+      <div className="blackboard blackboard-align mb-5">黒 板</div>
 
       <div
         ref={boardRef}
@@ -122,12 +143,57 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
         aria-describedby="board-usage"
         className="board-grid"
         style={{
-          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+          gridTemplateColumns: buildTracks(cols, aisleCols, "minmax(0, 1fr)"),
+          gridTemplateRows: buildTracks(rows, aisleRows, "auto"),
           ["--seat-font" as string]: seatFontSize(cols),
         }}
       >
+        {/* 通路の開閉（マウス操作用の控えめな目印。キーボードからはサイズ欄の操作で行う） */}
+        {boundaries(cols).map(i => (
+          <button
+            key={`ac-${i}`}
+            type="button"
+            tabIndex={-1}
+            aria-hidden="true"
+            className={`aisle-toggle is-col no-print ${aisleCols.includes(i) ? "is-open" : ""}`}
+            style={{ gridColumn: gutterTrack(i), gridRow: 1 }}
+            onClick={() => toggleAisleCol(i)}
+            title={aisleCols.includes(i) ? "縦の通路を閉じる" : `${i}列目と${i + 1}列目の間に縦の通路を開く`}
+          />
+        ))}
+        {boundaries(rows).map(i => (
+          <button
+            key={`ar-${i}`}
+            type="button"
+            tabIndex={-1}
+            aria-hidden="true"
+            className={`aisle-toggle is-row no-print ${aisleRows.includes(i) ? "is-open" : ""}`}
+            style={{ gridColumn: 1, gridRow: gutterTrack(i) }}
+            onClick={() => toggleAisleRow(i)}
+            title={aisleRows.includes(i) ? "横の通路を閉じる" : `${i}行目と${i + 1}行目の間に横の通路を開く`}
+          />
+        ))}
+
+        {/* 通路の区切り線（印刷でも出る） */}
+        {aisleCols.map(i => (
+          <div
+            key={`lane-c-${i}`}
+            aria-hidden="true"
+            className="aisle-lane-v"
+            style={{ gridColumn: gutterTrack(i), gridRow: `${seatTrack(0)} / -1` }}
+          />
+        ))}
+        {aisleRows.map(i => (
+          <div
+            key={`lane-r-${i}`}
+            aria-hidden="true"
+            className="aisle-lane-h"
+            style={{ gridRow: gutterTrack(i), gridColumn: `${seatTrack(0)} / -1` }}
+          />
+        ))}
+
         {Array.from({ length: rows }).map((_, r) => (
-          // display:contents で、意味上の行を保ちながら 1 つの CSS グリッドとして並べる。
+          // display:contents で、意味上の行を保ちながら 1 つのグリッドとして配置する。
           <div key={`row-${r}`} role="row" style={{ display: "contents" }}>
             {Array.from({ length: cols }).map((_, c) => {
               const key = seatKey(r, c);
@@ -158,7 +224,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                     : "クリックで選択 / ドラッグで入れ替え"
                   : selectedSeatKey
                     ? "クリックでここへ移動"
-                    : "クリックで無効席にする（通路など）";
+                    : "クリックで無効席にする（教卓の位置など）";
 
               return (
                 <div
@@ -166,12 +232,7 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                   data-seat={key}
                   role="gridcell"
                   tabIndex={focusKey === key ? 0 : -1}
-                  aria-label={seatLabel(
-                    r,
-                    c,
-                    name,
-                    isDisabled ? "無効席" : "空席"
-                  )}
+                  aria-label={`${r + 1}行${c + 1}列 ${name ?? (isDisabled ? "無効席" : "空席")}`}
                   aria-selected={isSelected}
                   aria-disabled={isDisabled}
                   draggable={!!name && !isShuffling}
@@ -185,7 +246,11 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
                   onDrop={e => handleDrop(e, key)}
                   className={classes}
                   title={title}
-                  style={{ cursor: isShuffling ? "wait" : undefined }}
+                  style={{
+                    gridColumn: seatTrack(c),
+                    gridRow: seatTrack(r),
+                    cursor: isShuffling ? "wait" : undefined,
+                  }}
                 >
                   {isDisabled ? (
                     <span className="seat-mark">有効化</span>

@@ -5,11 +5,13 @@ import {
   clampDim,
   duplicateNames,
   emptyBoard,
+  normalizeAisles,
   normalizeBoard,
   parseNames,
   seatKey,
   shuffleArray,
   subtractNames,
+  toggleAisle,
   vacantSeatKeys,
 } from "../src/lib/seating.ts";
 import type { Board } from "../src/lib/types.ts";
@@ -45,6 +47,37 @@ test("normalizeBoard clears anyone sitting on a disabled seat", () => {
 test("normalizeBoard refuses to pin an empty seat", () => {
   const board = boardWith({ pinned: ["r0-c0"] });
   assert.deepEqual(board.pinned, []);
+});
+
+test("通路は席数に影響しない（無効席とは別の概念）", () => {
+  const board = boardWith({ aisleCols: [1, 2], aisleRows: [2] });
+  assert.deepEqual(board.aisleCols, [1, 2]);
+  assert.deepEqual(board.aisleRows, [2]);
+  // 3×3 のまま席は 9 マス、無効席は増えない。
+  assert.equal(Object.keys(board.layout).length, 9);
+  assert.deepEqual(board.disabled, []);
+  const seated = assignRandomly(board, ["A", "B", "C", "D", "E", "F", "G", "H", "I"]);
+  assert.equal(Object.values(seated.layout).filter(Boolean).length, 9);
+});
+
+test("normalizeAisles keeps only boundaries inside the grid, sorted and unique", () => {
+  assert.deepEqual(normalizeAisles([3, 1, 1, 0, 6, -2, 2.4], 6), [1, 2, 3]);
+  assert.deepEqual(normalizeAisles(["2", null, undefined, Number.NaN], 6), []);
+  assert.deepEqual(normalizeAisles(undefined, 6), []);
+  // 1 列（境界なし）では通路を持てない。
+  assert.deepEqual(normalizeAisles([1], 1), []);
+});
+
+test("normalizeBoard drops aisles that fall outside after shrinking", () => {
+  const board = normalizeBoard({ rows: 2, cols: 2, aisleCols: [1, 4], aisleRows: [1, 9] });
+  assert.deepEqual(board.aisleCols, [1]);
+  assert.deepEqual(board.aisleRows, [1]);
+});
+
+test("toggleAisle opens and closes a boundary, keeping the list sorted", () => {
+  assert.deepEqual(toggleAisle([], 3), [3]);
+  assert.deepEqual(toggleAisle([3], 1), [1, 3]);
+  assert.deepEqual(toggleAisle([1, 3], 3), [1]);
 });
 
 test("parseNames treats one line as one person, even with spaces in the name", () => {

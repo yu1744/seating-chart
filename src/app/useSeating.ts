@@ -35,6 +35,7 @@ import {
   shuffleArray,
   shuffleTargetKeys,
   subtractNames,
+  toggleAisle,
   vacantSeatKeys,
 } from "@/lib/seating";
 import {
@@ -101,7 +102,7 @@ export function useSeating() {
   // 前回の作業内容を初期値として表示し、編集した時点から自分の状態に切り替える。
   const history = useHistoryState<Board>(session?.board ?? FALLBACK_BOARD);
   const board = history.state;
-  const { rows, cols, disabled: disabledSeats, pinned: pinnedSeats } = board;
+  const { rows, cols, disabled: disabledSeats, pinned: pinnedSeats, aisleCols, aisleRows } = board;
 
   // null は「まだ編集していない」= 復元値（なければ既定値）をそのまま使う、という意味。
   const [namesOverride, setNamesText] = useState<string | null>(null);
@@ -252,6 +253,30 @@ export function useSeating() {
     },
     [history, isShuffling]
   );
+
+  /** 列と列（行と行）の間の通路を開け閉めする。席の数は変わらない。 */
+  const toggleAisleCol = useCallback(
+    (boundary: number) => {
+      if (isShuffling) return;
+      history.commit(prev => ({ ...prev, aisleCols: toggleAisle(prev.aisleCols, boundary) }));
+    },
+    [history, isShuffling]
+  );
+
+  const toggleAisleRow = useCallback(
+    (boundary: number) => {
+      if (isShuffling) return;
+      history.commit(prev => ({ ...prev, aisleRows: toggleAisle(prev.aisleRows, boundary) }));
+    },
+    [history, isShuffling]
+  );
+
+  const clearAisles = useCallback(() => {
+    if (isShuffling) return;
+    history.commit(prev =>
+      prev.aisleCols.length || prev.aisleRows.length ? { ...prev, aisleCols: [], aisleRows: [] } : prev
+    );
+  }, [history, isShuffling]);
 
   const togglePinned = useCallback(
     (key: string) => {
@@ -464,25 +489,47 @@ export function useSeating() {
       setAlertMessage("書き出す席配置がありません。先に席替えを実行してください。");
       return;
     }
-    const header = ["", ...Array.from({ length: cols }, (_, c) => `${c + 1}列`)];
-    const body = Array.from({ length: rows }, (_, r) => [
-      `${r + 1}行`,
-      ...Array.from({ length: cols }, (_, c) => {
-        const k = seatKey(r, c);
-        if (board.disabled.includes(k)) return "―";
-        return board.layout[k] ?? "";
-      }),
-    ]);
+    // 通路を挟んだ並びのまま書き出し、Excel で開いても教室の形が分かるようにする。
+    const colSeq: (number | "aisle")[] = [];
+    for (let c = 0; c < cols; c++) {
+      if (aisleCols.includes(c)) colSeq.push("aisle");
+      colSeq.push(c);
+    }
+    const header = ["", ...colSeq.map(c => (c === "aisle" ? "通路" : `${c + 1}列`))];
+    const body: string[][] = [];
+    for (let r = 0; r < rows; r++) {
+      if (aisleRows.includes(r)) body.push(["通路", ...colSeq.map(() => "")]);
+      body.push([
+        `${r + 1}行`,
+        ...colSeq.map(c => {
+          if (c === "aisle") return "";
+          const k = seatKey(r, c);
+          if (board.disabled.includes(k)) return "―";
+          return board.layout[k] ?? "";
+        }),
+      ]);
+    }
     const rowsOut: (string | number)[][] = [
       [customTitle || DEFAULT_TITLE],
-      [`黒板側が ${1} 行目です`, `配置 ${placedCount} 名`],
+      ["1行目が黒板側です", `配置 ${placedCount} 名`],
       [],
       header,
       ...body,
     ];
     downloadTextFile(`${safeFileName(customTitle || DEFAULT_TITLE)}-席表-${fileStamp()}.csv`, toCsv(rowsOut));
     notify("席表を CSV に書き出しました。", "success");
-  }, [board.disabled, board.layout, cols, customTitle, notify, placedCount, rows, safeFileName]);
+  }, [
+    aisleCols,
+    aisleRows,
+    board.disabled,
+    board.layout,
+    cols,
+    customTitle,
+    notify,
+    placedCount,
+    rows,
+    safeFileName,
+  ]);
 
   // --- 席替えの実行 ---
   const prefersReducedMotion = () =>
@@ -682,12 +729,14 @@ export function useSeating() {
       rows,
       cols,
       disabledSeats: [...disabledSeats],
+      aisleCols: [...aisleCols],
+      aisleRows: [...aisleRows],
       createdAt: nowStamp(),
     };
     const next = [preset, ...savedPresets];
     reportSave(savePresets(next), `レイアウト「${name}」を保存しました。`);
     setPresetName("");
-  }, [cols, disabledSeats, presetName, reportSave, rows, savedPresets]);
+  }, [aisleCols, aisleRows, cols, disabledSeats, presetName, reportSave, rows, savedPresets]);
 
   const loadPreset = useCallback(
     (p: SeatingPreset) => {
@@ -704,6 +753,8 @@ export function useSeating() {
               layout: {},
               disabled: [...p.disabledSeats],
               pinned: [],
+              aisleCols: [...(p.aisleCols ?? [])],
+              aisleRows: [...(p.aisleRows ?? [])],
             })
           );
           setSelectedResultId(null);
@@ -816,6 +867,8 @@ export function useSeating() {
       cols,
       disabledSeats: [...disabledSeats],
       pinnedSeats: [...pinnedSeats],
+      aisleCols: [...aisleCols],
+      aisleRows: [...aisleRows],
       seatingLayout: { ...board.layout },
       namesText,
       customTitle,
@@ -826,6 +879,8 @@ export function useSeating() {
     setSelectedResultId(result.id);
     setResultName("");
   }, [
+    aisleCols,
+    aisleRows,
     board.layout,
     cols,
     customTitle,
@@ -854,6 +909,8 @@ export function useSeating() {
                 cols,
                 disabledSeats: [...disabledSeats],
                 pinnedSeats: [...pinnedSeats],
+                aisleCols: [...aisleCols],
+                aisleRows: [...aisleRows],
                 seatingLayout: { ...board.layout },
                 namesText,
                 customTitle,
@@ -865,6 +922,8 @@ export function useSeating() {
       },
     });
   }, [
+    aisleCols,
+    aisleRows,
     board.layout,
     cols,
     confirm,
@@ -893,6 +952,8 @@ export function useSeating() {
               layout: { ...r.seatingLayout },
               disabled: [...r.disabledSeats],
               pinned: [...(r.pinnedSeats ?? [])],
+              aisleCols: [...(r.aisleCols ?? [])],
+              aisleRows: [...(r.aisleRows ?? [])],
             })
           );
           setNamesText(r.namesText);
@@ -1068,6 +1129,8 @@ export function useSeating() {
     setCols,
     disabledSeats,
     pinnedSeats,
+    aisleCols,
+    aisleRows,
     seatingLayout: displayLayout,
     namesText,
     setNamesText,
@@ -1126,6 +1189,9 @@ export function useSeating() {
 
     // 操作
     toggleSeatDisabled,
+    toggleAisleCol,
+    toggleAisleRow,
+    clearAisles,
     togglePinned,
     removeFromSeat,
     swapSeats,

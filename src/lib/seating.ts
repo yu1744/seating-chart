@@ -25,19 +25,47 @@ export function allSeatKeys(rows: number, cols: number): string[] {
 export function emptyBoard(rows = DEFAULT_DIM, cols = DEFAULT_DIM): Board {
   const layout: Record<string, string | null> = {};
   for (const k of allSeatKeys(rows, cols)) layout[k] = null;
-  return { rows, cols, layout, disabled: [], pinned: [] };
+  return { rows, cols, layout, disabled: [], pinned: [], aisleCols: [], aisleRows: [] };
 }
+
+/** 通路の境界番号（1 以上 dim-1 以下）だけを残して並べ替える。 */
+export function normalizeAisles(values: readonly unknown[] | undefined, dim: number): number[] {
+  if (!values) return [];
+  const seen = new Set<number>();
+  for (const v of values) {
+    const n = typeof v === "number" ? Math.round(v) : Number.NaN;
+    if (Number.isFinite(n) && n >= 1 && n <= dim - 1) seen.add(n);
+  }
+  return [...seen].sort((a, b) => a - b);
+}
+
+/** 通路の有無を切り替えた配列を返す。 */
+export const toggleAisle = (values: readonly number[], boundary: number): number[] =>
+  values.includes(boundary)
+    ? values.filter(v => v !== boundary)
+    : [...values, boundary].sort((a, b) => a - b);
 
 const withinBounds = (key: string, rows: number, cols: number) => {
   const p = parseSeatKey(key);
   return !!p && p.r < rows && p.c < cols;
 };
 
+/** normalizeBoard に渡せる、項目が欠けていてもよい席表。 */
+export interface BoardLike {
+  rows: number;
+  cols: number;
+  layout?: Record<string, string | null>;
+  disabled?: string[];
+  pinned?: string[];
+  aisleCols?: number[];
+  aisleRows?: number[];
+}
+
 /**
  * 寸法を有効範囲に収め、範囲外に取り残されたキーを落とし、
  * 全ての座席キーが layout に存在する状態へ整える。
  */
-export function normalizeBoard(board: Board): Board {
+export function normalizeBoard(board: BoardLike): Board {
   const rows = clampDim(board.rows);
   const cols = clampDim(board.cols);
   const layout: Record<string, string | null> = {};
@@ -52,7 +80,15 @@ export function normalizeBoard(board: Board): Board {
   );
   // 無効席に人が残らないようにする。
   for (const k of disabled) layout[k] = null;
-  return { rows, cols, layout, disabled, pinned };
+  return {
+    rows,
+    cols,
+    layout,
+    disabled,
+    pinned,
+    aisleCols: normalizeAisles(board.aisleCols, cols),
+    aisleRows: normalizeAisles(board.aisleRows, rows),
+  };
 }
 
 const uniq = <T,>(arr: T[]): T[] => Array.from(new Set(arr));

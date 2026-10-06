@@ -315,9 +315,136 @@ body {
 }
 
 /* ===== 席 ===== */
+/*
+ * 席の間（境界）そのものをトラックにしているので gap は使わない。
+ * --seat-gap が通常の席間、--aisle が通路を開いたときの幅。
+ * --ctl / --ctl-gap は通路ボタンを置くための操作用トラック（印刷では消す）。
+ */
+.board-panel {
+  --seat-gap: 8px;
+  --aisle: 26px;
+  --ctl: 14px;
+  --ctl-gap: 4px;
+}
+
 .board-grid {
   display: grid;
-  gap: 8px;
+  gap: 0;
+}
+
+/* 黒板は席の始まる位置（通路ボタンの操作トラックの右）にそろえる。 */
+.blackboard-align {
+  margin-left: calc(var(--ctl) + var(--ctl-gap));
+}
+
+/* 通路の開閉ボタン（席の間に置く控えめな目印） */
+.aisle-toggle {
+  justify-self: center;
+  align-self: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 99px;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+}
+.aisle-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  border-radius: 99px;
+  background: var(--line-strong);
+  transition: background-color 0.15s, width 0.15s, height 0.15s;
+}
+.aisle-toggle.is-col::before {
+  width: 3px;
+  height: 3px;
+}
+.aisle-toggle.is-row::before {
+  width: 3px;
+  height: 3px;
+}
+.aisle-toggle:hover::before {
+  background: var(--accent);
+}
+.aisle-toggle.is-col:hover::before {
+  width: 3px;
+  height: 11px;
+}
+.aisle-toggle.is-row:hover::before {
+  width: 11px;
+  height: 3px;
+}
+.aisle-toggle.is-open::before {
+  background: var(--accent);
+}
+.aisle-toggle.is-col.is-open::before {
+  width: 3px;
+  height: 11px;
+}
+.aisle-toggle.is-row.is-open::before {
+  width: 11px;
+  height: 3px;
+}
+
+/* サイズ欄の通路トグル（キーボードでも操作できる通路の開閉） */
+.aisle-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+.aisle-chip:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+.aisle-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.aisle-chip.is-open {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.aisle-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 通路の区切り線 */
+.aisle-lane-v {
+  justify-self: center;
+  align-self: stretch;
+  width: 1px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--line-strong) 0 4px,
+    transparent 4px 9px
+  );
+}
+.aisle-lane-h {
+  align-self: center;
+  justify-self: stretch;
+  height: 1px;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0 4px,
+    transparent 4px 9px
+  );
 }
 
 .seat {
@@ -632,9 +759,23 @@ body {
     padding: 0 !important;
   }
 
+  .board-panel {
+    /* 操作用トラックを畳み、通路は細い余白＋区切り線として印刷する。 */
+    --seat-gap: 6px;
+    --aisle: 16px;
+    --ctl: 0px;
+    --ctl-gap: 0px;
+  }
+
   .board-grid {
-    gap: 6px !important;
     break-inside: avoid;
+  }
+
+  .aisle-lane-v,
+  .aisle-lane-h {
+    background-image: none !important;
+    background-color: #cbd5e1 !important;
+    print-color-adjust: exact;
   }
 
   .seat {

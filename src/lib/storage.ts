@@ -23,6 +23,8 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const num = (v: unknown, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
 const strArray = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+const numArray = (v: unknown): number[] =>
+  Array.isArray(v) ? v.filter((x): x is number => typeof x === "number" && Number.isFinite(x)) : [];
 
 const layoutOf = (v: unknown): Record<string, string | null> => {
   if (!isRecord(v)) return {};
@@ -121,6 +123,8 @@ const pickPreset = (o: Record<string, unknown>): SeatingPreset | null => {
     rows: clampDim(num(o.rows, 6)),
     cols: clampDim(num(o.cols, 6)),
     disabledSeats: strArray(o.disabledSeats),
+    aisleCols: numArray(o.aisleCols),
+    aisleRows: numArray(o.aisleRows),
     createdAt: str(o.createdAt),
   };
 };
@@ -143,6 +147,8 @@ const pickResult = (o: Record<string, unknown>): SeatingResult | null => {
     cols: clampDim(num(o.cols, 6)),
     disabledSeats: strArray(o.disabledSeats),
     pinnedSeats: strArray(o.pinnedSeats),
+    aisleCols: numArray(o.aisleCols),
+    aisleRows: numArray(o.aisleRows),
     seatingLayout: layoutOf(o.seatingLayout),
     namesText: str(o.namesText),
     customTitle: str(o.customTitle, "本日の席替え"),
@@ -181,6 +187,8 @@ const parseSession = (raw: unknown): SessionSnapshot | null => {
     layout: layoutOf(b.layout),
     disabled: strArray(b.disabled),
     pinned: strArray(b.pinned),
+    aisleCols: numArray(b.aisleCols),
+    aisleRows: numArray(b.aisleRows),
   });
   const namesText = str(raw.namesText);
   const hasContent =

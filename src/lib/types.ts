@@ -4,19 +4,26 @@ export interface Board {
   cols: number;
   /** 座席キー（`r0-c0` 形式）→ 名前。空席は null。 */
   layout: Record<string, string | null>;
-  /** 使わない席（通路など）＝無効席のキー一覧。 */
+  /** 使わない席（教卓の位置など）＝無効席のキー一覧。 */
   disabled: string[];
   /** シャッフルしても動かさない固定席のキー一覧。 */
   pinned: string[];
+  /** 縦の通路。値 i は「i 列目と i+1 列目の間」を表す（1 以上 cols-1 以下）。 */
+  aisleCols: number[];
+  /** 横の通路。値 i は「i 行目と i+1 行目の間」を表す（1 以上 rows-1 以下）。 */
+  aisleRows: number[];
 }
 
-/** レイアウト型紙（サイズと無効席の設定のみ）。 */
+/** レイアウト型紙（サイズ・無効席・通路の設定のみ）。 */
 export interface SeatingPreset {
   id: string;
   name: string;
   rows: number;
   cols: number;
   disabledSeats: string[];
+  /** v3 以降で追加。旧データには存在しない。 */
+  aisleCols?: number[];
+  aisleRows?: number[];
   createdAt: string;
 }
 
@@ -37,6 +44,9 @@ export interface SeatingResult {
   disabledSeats: string[];
   /** v2 以降で追加。旧データには存在しない。 */
   pinnedSeats?: string[];
+  /** v3 以降で追加。旧データには存在しない。 */
+  aisleCols?: number[];
+  aisleRows?: number[];
   seatingLayout: Record<string, string | null>;
   namesText: string;
   customTitle: string;

@@ -69,8 +69,67 @@ function DimRow({ id, label, unit, value, min, max, disabled, onChange }: DimRow
   );
 }
 
+interface AisleRowProps {
+  label: string;
+  direction: "col" | "row";
+  count: number;
+  open: readonly number[];
+  disabled: boolean;
+  onToggle: (boundary: number) => void;
+}
+
+/** 席と席の間に通路を開けるトグル。席の数は変わらない。 */
+function AisleRow({ label, direction, count, open, disabled, onToggle }: AisleRowProps) {
+  const boundaries = Array.from({ length: Math.max(0, count - 1) }, (_, i) => i + 1);
+  const unit = direction === "col" ? "列" : "行";
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="label shrink-0 w-14">{label}</span>
+      {boundaries.length === 0 ? (
+        <span className="hint">—</span>
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {boundaries.map(i => {
+            const isOpen = open.includes(i);
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => onToggle(i)}
+                disabled={disabled}
+                aria-pressed={isOpen}
+                aria-label={`${i}${unit}目と${i + 1}${unit}目の間の通路`}
+                title={`${i}${unit}目と${i + 1}${unit}目の間の通路`}
+                className={`aisle-chip ${direction === "col" ? "is-col" : "is-row"} ${isOpen ? "is-open" : ""}`}
+              >
+                <span aria-hidden="true">{i}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SizeControls({ s }: SizeControlsProps) {
-  const { cols, setCols, rows, setRows, isShuffling, totalSeats, MIN_DIM, MAX_DIM } = s;
+  const {
+    cols,
+    setCols,
+    rows,
+    setRows,
+    isShuffling,
+    totalSeats,
+    aisleCols,
+    aisleRows,
+    toggleAisleCol,
+    toggleAisleRow,
+    clearAisles,
+    MIN_DIM,
+    MAX_DIM,
+  } = s;
+  const hasAisle = aisleCols.length > 0 || aisleRows.length > 0;
 
   return (
     <Panel
@@ -101,7 +160,38 @@ export default function SizeControls({ s }: SizeControlsProps) {
           onChange={setRows}
         />
       </div>
-      <p className="hint mt-3.5">空席をクリックすると無効席（通路など）にできます。</p>
+      <div className="divider my-4" />
+
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="panel-title text-[12px]">通路</span>
+        {hasAisle && (
+          <button type="button" className="btn btn-sm" onClick={clearAisles} disabled={isShuffling}>
+            すべて閉じる
+          </button>
+        )}
+      </div>
+      <div className="flex flex-col gap-2">
+        <AisleRow
+          label="縦（列間）"
+          direction="col"
+          count={cols}
+          open={aisleCols}
+          disabled={isShuffling}
+          onToggle={toggleAisleCol}
+        />
+        <AisleRow
+          label="横（行間）"
+          direction="row"
+          count={rows}
+          open={aisleRows}
+          disabled={isShuffling}
+          onToggle={toggleAisleRow}
+        />
+      </div>
+
+      <p className="hint mt-3.5">
+        通路は席の数を変えません。席表の上や左の目印からも開閉できます。使わないマスは空席をクリックして無効席に。
+      </p>
     </Panel>
   );
 }
