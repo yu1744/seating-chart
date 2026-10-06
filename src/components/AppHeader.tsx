@@ -1,7 +1,7 @@
 "use client";
 import React, { useSyncExternalStore } from "react";
 import type { SeatingHook } from "@/app/useSeating";
-import { PrintIcon, SeatIcon } from "./ui/Icons";
+import { PrintIcon } from "./ui/Icons";
 
 interface AppHeaderProps {
   s: SeatingHook;
@@ -23,10 +23,7 @@ export default function AppHeader({ s }: AppHeaderProps) {
     <>
       <header className="flex flex-wrap items-center justify-between gap-3 mb-5 no-print">
         <div className="flex items-center gap-2.5">
-          <h1 className="flex items-center gap-2 text-[17px] font-semibold tracking-tight">
-            <SeatIcon className="w-5 h-5 text-[var(--faint)]" />
-            席替えシステム
-          </h1>
+          <h1 className="text-[18px] font-semibold tracking-[-0.01em]">席替えシステム</h1>
           {s.isRestored && (
             <span className="chip" title="前回の作業内容をそのまま表示しています">
               前回の内容を復元

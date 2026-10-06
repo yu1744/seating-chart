@@ -271,13 +271,6 @@ export function useSeating() {
     [history, isShuffling]
   );
 
-  const clearAisles = useCallback(() => {
-    if (isShuffling) return;
-    history.commit(prev =>
-      prev.aisleCols.length || prev.aisleRows.length ? { ...prev, aisleCols: [], aisleRows: [] } : prev
-    );
-  }, [history, isShuffling]);
-
   const togglePinned = useCallback(
     (key: string) => {
       if (isShuffling) return;
@@ -1191,7 +1184,6 @@ export function useSeating() {
     toggleSeatDisabled,
     toggleAisleCol,
     toggleAisleRow,
-    clearAisles,
     togglePinned,
     removeFromSeat,
     swapSeats,

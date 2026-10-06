@@ -50,7 +50,7 @@ export default function Toolbar({ s }: ToolbarProps) {
           : { tone: "chip-ok", text: "全員配置済み" };
 
   return (
-    <div className="panel px-4 py-3 flex flex-wrap items-center justify-between gap-y-3 gap-x-5 no-print">
+    <div className="panel toolbar-sticky px-4 py-3 flex flex-wrap items-center justify-between gap-y-3 gap-x-5 no-print">
       <div className="flex items-center gap-5">
         <Stat label="有効席" value={activeSeatsCount} unit="席" />
         <div className="w-px h-7 bg-[var(--line)]" aria-hidden="true" />
@@ -66,19 +66,16 @@ export default function Toolbar({ s }: ToolbarProps) {
       </div>
 
       <div className="flex items-center gap-1.5 ml-auto">
-        <label
-          className="flex items-center gap-1.5 mr-1 text-[11.5px] font-medium text-[var(--muted)] cursor-pointer select-none"
+        <button
+          type="button"
+          className="chip-toggle mr-1"
+          aria-pressed={avoidSameSeat}
+          disabled={isShuffling}
+          onClick={() => setAvoidSameSeat(v => !v)}
           title="席替え後に前と同じ席になる人を、できるだけ減らします"
         >
-          <input
-            type="checkbox"
-            checked={avoidSameSeat}
-            onChange={e => setAvoidSameSeat(e.target.checked)}
-            disabled={isShuffling}
-            className="accent-[var(--accent)] cursor-pointer"
-          />
           前と同じ席を避ける
-        </label>
+        </button>
         <button
           type="button"
           className="btn-icon"
