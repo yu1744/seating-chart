@@ -1,445 +1,1175 @@
 "use client";
-import { useState, useEffect, useRef, useMemo } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import type {
+  BackupFile,
+  Board,
+  SeatingPreset,
+  SeatingResult,
+  StudentRoster,
+} from "@/lib/types";
+import {
+  MAX_DIM,
+  MIN_DIM,
+  assignRandomly,
+  clampDim,
+  createId,
+  duplicateNames,
+  emptyBoard,
+  formatStamp,
+  getAvatarColors,
+  getInitial,
+  normalizeBoard,
+  nowStamp,
+  parseNames,
+  pinnedNames,
+  placedNames,
+  seatKey,
+  shuffleArray,
+  shuffleTargetKeys,
+  subtractNames,
+  vacantSeatKeys,
+} from "@/lib/seating";
+import {
+  downloadTextFile,
+  extractNames,
+  fileStamp,
+  parseDelimited,
+  toCsv,
+} from "@/lib/csv";
+import {
+  EMPTY_PRESETS,
+  EMPTY_RESULTS,
+  EMPTY_ROSTERS,
+  clearSession,
+  parseBackup,
+  savePresets,
+  saveResults,
+  saveRosters,
+  saveSession,
+  serverSnapshotSession,
+  snapshotPresets,
+  snapshotResults,
+  snapshotRosters,
+  snapshotSession,
+  subscribeSaved,
+  type SaveOutcome,
+} from "@/lib/storage";
+import { useHistoryState } from "@/lib/useHistoryState";
 
-export interface SeatingPreset {
+export type { SeatingPreset, SeatingResult, StudentRoster, Board } from "@/lib/types";
+
+export type ToastKind = "success" | "error" | "info";
+export interface Toast {
   id: string;
-  name: string;
-  rows: number;
-  cols: number;
-  disabledSeats: string[];
-  createdAt: string;
+  message: string;
+  kind: ToastKind;
 }
 
-export interface StudentRoster {
-  id: string;
-  name: string;
-  namesText: string;
-  createdAt: string;
+export interface ConfirmConfig {
+  title?: string;
+  message: string;
+  confirmLabel?: string;
+  tone?: "default" | "danger";
+  onConfirm: () => void;
+  onCancel?: () => void;
 }
 
-export interface SeatingResult {
-  id: string;
-  name: string;
-  rows: number;
-  cols: number;
-  disabledSeats: string[];
-  seatingLayout: Record<string, string | null>;
-  namesText: string;
-  customTitle: string;
-  createdAt: string;
-}
+export type DragPayload = { type: "seat"; key: string } | { type: "name"; name: string };
+
+const DEFAULT_TITLE = "本日の席替え";
+const SHUFFLE_FRAMES = 18;
+const SHUFFLE_INTERVAL_MS = 70;
+
+const FALLBACK_BOARD = emptyBoard();
 
 export function useSeating() {
-  const [rows, setRows] = useState(6);
-  const [cols, setCols] = useState(6);
-  const [namesText, setNamesText] = useState("");
-  const [seatingLayout, setSeatingLayout] = useState<Record<string, string | null>>({});
-  const [disabledSeats, setDisabledSeats] = useState<string[]>([]);
+  // localStorage は React の外の状態。描画後に読み直されるため、
+  // サーバー描画との食い違い（ハイドレーション不一致）を起こさない。
+  const savedPresets = useSyncExternalStore(subscribeSaved, snapshotPresets, () => EMPTY_PRESETS);
+  const savedRosters = useSyncExternalStore(subscribeSaved, snapshotRosters, () => EMPTY_ROSTERS);
+  const savedResults = useSyncExternalStore(subscribeSaved, snapshotResults, () => EMPTY_RESULTS);
+  const session = useSyncExternalStore(subscribeSaved, snapshotSession, serverSnapshotSession);
+
+  // 前回の作業内容を初期値として表示し、編集した時点から自分の状態に切り替える。
+  const history = useHistoryState<Board>(session?.board ?? FALLBACK_BOARD);
+  const board = history.state;
+  const { rows, cols, disabled: disabledSeats, pinned: pinnedSeats } = board;
+
+  // null は「まだ編集していない」= 復元値（なければ既定値）をそのまま使う、という意味。
+  const [namesOverride, setNamesText] = useState<string | null>(null);
+  const [titleOverride, setCustomTitle] = useState<string | null>(null);
+  const namesText = namesOverride ?? session?.namesText ?? "";
+  const customTitle = titleOverride ?? session?.customTitle ?? DEFAULT_TITLE;
+  /** 復元した内容をまだ触っていない状態か。 */
+  const isRestored = !!session && history.isPristine && namesOverride === null;
+  const isTouched = !history.isPristine || namesOverride !== null || titleOverride !== null;
+
   const [presetName, setPresetName] = useState("");
   const [rosterName, setRosterName] = useState("");
   const [resultName, setResultName] = useState("");
-  const [savedPresets, setSavedPresets] = useState<SeatingPreset[]>([]);
-  const [savedRosters, setSavedRosters] = useState<StudentRoster[]>([]);
-  const [savedResults, setSavedResults] = useState<SeatingResult[]>([]);
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
   const [selectedRosterId, setSelectedRosterId] = useState<string | null>(null);
-  const [presetTab, setPresetTab] = useState<"layout" | "roster" | "result">("layout");
+  const [presetTab, setPresetTab] = useState<"layout" | "roster" | "result" | "backup">("layout");
 
-  // Interaction/Animation states
+  // 操作・演出の状態
   const [isShuffling, setIsShuffling] = useState(false);
-  const [draggedSeatKey, setDraggedSeatKey] = useState<string | null>(null);
+  const [previewLayout, setPreviewLayout] = useState<Record<string, string | null> | null>(null);
+  const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
   const [dragOverSeatKey, setDragOverSeatKey] = useState<string | null>(null);
-  const [customTitle, setCustomTitle] = useState("本日の席替え");
-  const shuffleTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [selectedSeatKey, setSelectedSeatKey] = useState<string | null>(null);
+  const shuffleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Custom Modal States
+  // 通知・ダイアログ
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
-  const [confirmConfig, setConfirmConfig] = useState<{
-    message: string;
-    onConfirm: () => void;
-    onCancel?: () => void;
-  } | null>(null);
+  const [confirmConfig, setConfirmConfig] = useState<ConfirmConfig | null>(null);
 
-  const parsedNames = useMemo(() => {
-    if (!namesText.trim()) return [];
-    return namesText.split(/\r?\n/).map(n => n.trim()).filter(n => n.length > 0);
-  }, [namesText]);
-
-  const activeSeatsCount = rows * cols - disabledSeats.length;
-  const studentCount = parsedNames.length;
-  const seatDeficit = studentCount - activeSeatsCount;
-
-  // Grid initialization / adjustment
-  useEffect(() => {
-    setSeatingLayout(prev => {
-      const next: Record<string, string | null> = {};
-      for (let r = 0; r < rows; r++)
-        for (let c = 0; c < cols; c++) {
-          const k = `r${r}-c${c}`;
-          next[k] = prev[k] !== undefined ? prev[k] : null;
-        }
-      return next;
-    });
-    setDisabledSeats(prev => prev.filter(k => {
-      const m = k.match(/^r(\d+)-c(\d+)$/);
-      return m ? parseInt(m[1]) < rows && parseInt(m[2]) < cols : false;
-    }));
-  }, [rows, cols]);
-
-  // Load from local storage
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const storedPresets = localStorage.getItem("seating-presets");
-      if (storedPresets) {
-        try { setSavedPresets(JSON.parse(storedPresets)); } catch (e) { console.error(e); }
-      }
-      const storedRosters = localStorage.getItem("seating-rosters");
-      if (storedRosters) {
-        try { setSavedRosters(JSON.parse(storedRosters)); } catch (e) { console.error(e); }
-      }
-      const storedResults = localStorage.getItem("seating-results");
-      if (storedResults) {
-        try { setSavedResults(JSON.parse(storedResults)); } catch (e) { console.error(e); }
-      }
-    }
+  const notify = useCallback((message: string, kind: ToastKind = "info") => {
+    const id = createId();
+    setToasts(prev => [...prev.slice(-2), { id, message, kind }]);
+    const timer = setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+      toastTimersRef.current.delete(timer);
+    }, 3600);
+    toastTimersRef.current.add(timer);
   }, []);
 
-  useEffect(() => () => { if (shuffleTimerRef.current) clearInterval(shuffleTimerRef.current); }, []);
+  const dismissToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
 
-  const shuffleArray = <T,>(arr: T[]): T[] => {
-    const a = [...arr];
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  };
+  /** 保存の失敗（容量超過・プライベートモード等）は黙って捨てずに知らせる。 */
+  const reportSave = useCallback(
+    (outcome: SaveOutcome, successMessage: string) => {
+      if (outcome.ok) notify(successMessage, "success");
+      else setAlertMessage(outcome.message);
+      return outcome.ok;
+    },
+    [notify]
+  );
 
-  const toggleSeatDisabled = (r: number, c: number) => {
-    if (isShuffling) return;
-    const k = `r${r}-c${c}`;
-    if (seatingLayout[k]) setSeatingLayout(p => ({ ...p, [k]: null }));
-    setDisabledSeats(p => p.includes(k) ? p.filter(x => x !== k) : [...p, k]);
-  };
+  const confirm = useCallback((config: ConfirmConfig) => setConfirmConfig(config), []);
+  const closeConfirm = useCallback(() => setConfirmConfig(null), []);
+  const closeAlert = useCallback(() => setAlertMessage(null), []);
 
-  const fillSampleNames = () => {
-    const s = ["佐藤 健","鈴木 一郎","高橋 美咲","田中 太郎","伊藤 結衣","渡辺 翔","山本 陽子","中村 拓海","小林 莉子","加藤 蓮","吉田 葵","山田 花子","佐々木 陸","山口 紬","松本 大輝","井上 桜","木村 健太","林 菜々美","斎藤 陽太","清水 美羽","山崎 優","池田 優斗","橋本 結菜","阿部 翔太","森 葵衣","前田 拓也","石川 陽菜","中島 健吾","小川 芽依","藤田 颯太"];
-    setNamesText(s.slice(0, Math.min(activeSeatsCount > 0 ? activeSeatsCount : 24, s.length)).join("\n"));
-  };
+  // --- 導出値 ---
+  const parsedNames = useMemo(() => parseNames(namesText), [namesText]);
+  const duplicates = useMemo(() => duplicateNames(parsedNames), [parsedNames]);
+  const displayLayout = previewLayout ?? board.layout;
 
-  const startShuffle = () => {
+  const totalSeats = rows * cols;
+  const activeSeatsCount = totalSeats - disabledSeats.length;
+  const pinnedCount = pinnedSeats.length;
+  const shuffleSeatCount = Math.max(0, activeSeatsCount - pinnedCount);
+  const studentCount = parsedNames.length;
+
+  const namesOnPinnedSeats = useMemo(() => pinnedNames(board), [board]);
+  const shufflePool = useMemo(
+    () => subtractNames(parsedNames, namesOnPinnedSeats),
+    [parsedNames, namesOnPinnedSeats]
+  );
+  const seatDeficit = shufflePool.length - shuffleSeatCount;
+
+  const currentlyPlaced = useMemo(() => placedNames(board), [board]);
+  const placedCount = currentlyPlaced.length;
+  /** 名簿にいるのに、まだどの席にも座っていない人。 */
+  const unassignedNames = useMemo(
+    () => subtractNames(parsedNames, currentlyPlaced),
+    [parsedNames, currentlyPlaced]
+  );
+  /** 席にいるのに名簿から消えている人（名簿を編集したときの取り残し）。 */
+  const strayNames = useMemo(
+    () => subtractNames(currentlyPlaced, parsedNames),
+    [currentlyPlaced, parsedNames]
+  );
+
+  // --- 作業内容の自動保存（リロードや誤操作での離脱に備える） ---
+  useEffect(() => {
+    if (!isTouched) return;
+    const timer = setTimeout(() => {
+      saveSession({ board, namesText, customTitle, savedAt: nowStamp() });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [board, namesText, customTitle, isTouched]);
+
+  useEffect(
+    () => () => {
+      if (shuffleTimerRef.current) clearInterval(shuffleTimerRef.current);
+      for (const t of toastTimersRef.current) clearTimeout(t);
+      toastTimersRef.current.clear();
+    },
+    []
+  );
+
+  // --- 席表のサイズ ---
+  const setDim = useCallback(
+    (axis: "rows" | "cols", value: number | ((prev: number) => number)) => {
+      if (isShuffling) return;
+      history.commit(prev => {
+        const current = axis === "rows" ? prev.rows : prev.cols;
+        const raw = typeof value === "function" ? value(current) : value;
+        const next = clampDim(raw);
+        if (next === current) return prev;
+        return normalizeBoard({ ...prev, [axis]: next });
+      }, { tag: `size-${axis}` });
+    },
+    [history, isShuffling]
+  );
+
+  const setRows = useCallback(
+    (v: number | ((prev: number) => number)) => setDim("rows", v),
+    [setDim]
+  );
+  const setCols = useCallback(
+    (v: number | ((prev: number) => number)) => setDim("cols", v),
+    [setDim]
+  );
+
+  // --- 座席の操作 ---
+  const toggleSeatDisabled = useCallback(
+    (r: number, c: number) => {
+      if (isShuffling) return;
+      const k = seatKey(r, c);
+      history.commit(prev => {
+        const isDisabled = prev.disabled.includes(k);
+        return normalizeBoard({
+          ...prev,
+          layout: { ...prev.layout, [k]: isDisabled ? prev.layout[k] ?? null : null },
+          disabled: isDisabled ? prev.disabled.filter(x => x !== k) : [...prev.disabled, k],
+          pinned: prev.pinned.filter(x => x !== k),
+        });
+      });
+    },
+    [history, isShuffling]
+  );
+
+  const togglePinned = useCallback(
+    (key: string) => {
+      if (isShuffling) return;
+      history.commit(prev => {
+        if (!prev.layout[key]) return prev;
+        const isPinned = prev.pinned.includes(key);
+        return {
+          ...prev,
+          pinned: isPinned ? prev.pinned.filter(x => x !== key) : [...prev.pinned, key],
+        };
+      });
+    },
+    [history, isShuffling]
+  );
+
+  const removeFromSeat = useCallback(
+    (key: string) => {
+      if (isShuffling) return;
+      history.commit(prev => {
+        if (!prev.layout[key]) return prev;
+        return {
+          ...prev,
+          layout: { ...prev.layout, [key]: null },
+          pinned: prev.pinned.filter(x => x !== key),
+        };
+      });
+      setSelectedSeatKey(cur => (cur === key ? null : cur));
+    },
+    [history, isShuffling]
+  );
+
+  /** 席と席を入れ替える（空席へのドロップは移動になる）。固定は席に付いたまま残す。 */
+  const swapSeats = useCallback(
+    (from: string, to: string) => {
+      if (isShuffling || from === to) return;
+      history.commit(prev => {
+        if (prev.disabled.includes(to) || prev.disabled.includes(from)) return prev;
+        const a = prev.layout[from];
+        const b = prev.layout[to];
+        if (!a && !b) return prev;
+        return {
+          ...prev,
+          layout: { ...prev.layout, [from]: b, [to]: a },
+          // 空席になった側の固定は意味を失うので外す。
+          pinned: prev.pinned.filter(k => (k === from ? !!b : k === to ? !!a : true)),
+        };
+      });
+    },
+    [history, isShuffling]
+  );
+
+  /** 未配置リストなどから、名前を特定の席に入れる。 */
+  const assignNameToSeat = useCallback(
+    (name: string, key: string) => {
+      if (isShuffling || !name) return;
+      history.commit(prev => {
+        if (prev.disabled.includes(key)) return prev;
+        return { ...prev, layout: { ...prev.layout, [key]: name } };
+      });
+    },
+    [history, isShuffling]
+  );
+
+  /** 未配置の名前を、空いている席のどこかへ入れる。 */
+  const placeNameInFirstVacancy = useCallback(
+    (name: string) => {
+      if (isShuffling) return;
+      const vacancies = vacantSeatKeys(board);
+      if (!vacancies.length) {
+        notify("空いている席がありません。席を増やすか、通路設定を解除してください。", "error");
+        return;
+      }
+      assignNameToSeat(name, vacancies[0]);
+      notify(`${name} さんを空席に配置しました。`, "success");
+    },
+    [assignNameToSeat, board, isShuffling, notify]
+  );
+
+  // --- クリック（タップ）による入れ替え ---
+  const handleSeatActivate = useCallback(
+    (key: string) => {
+      if (isShuffling) return;
+      const occupied = !!board.layout[key];
+      const isDisabled = board.disabled.includes(key);
+      if (isDisabled) {
+        const p = /^r(\d+)-c(\d+)$/.exec(key);
+        if (p) toggleSeatDisabled(parseInt(p[1], 10), parseInt(p[2], 10));
+        return;
+      }
+      if (selectedSeatKey) {
+        if (selectedSeatKey === key) setSelectedSeatKey(null);
+        else {
+          swapSeats(selectedSeatKey, key);
+          setSelectedSeatKey(null);
+        }
+        return;
+      }
+      if (occupied) {
+        setSelectedSeatKey(key);
+        return;
+      }
+      // 選択していない状態で空席をクリックしたら、通路として無効化する。
+      const p = /^r(\d+)-c(\d+)$/.exec(key);
+      if (p) toggleSeatDisabled(parseInt(p[1], 10), parseInt(p[2], 10));
+    },
+    [board.disabled, board.layout, isShuffling, selectedSeatKey, swapSeats, toggleSeatDisabled]
+  );
+
+  const clearSelection = useCallback(() => setSelectedSeatKey(null), []);
+
+  // --- 名前の入力 ---
+  const fillSampleNames = useCallback(() => {
+    const sample = [
+      "佐藤 健", "鈴木 一郎", "高橋 美咲", "田中 太郎", "伊藤 結衣", "渡辺 翔",
+      "山本 陽子", "中村 拓海", "小林 莉子", "加藤 蓮", "吉田 葵", "山田 花子",
+      "佐々木 陸", "山口 紬", "松本 大輝", "井上 桜", "木村 健太", "林 菜々美",
+      "斎藤 陽太", "清水 美羽", "山崎 優", "池田 優斗", "橋本 結菜", "阿部 翔太",
+      "森 葵衣", "前田 拓也", "石川 陽菜", "中島 健吾", "小川 芽依", "藤田 颯太",
+    ];
+    const count = Math.min(activeSeatsCount > 0 ? activeSeatsCount : 24, sample.length);
+    setNamesText(sample.slice(0, count).join("\n"));
+    notify(`サンプルの名前を ${count} 名分入力しました。`, "info");
+  }, [activeSeatsCount, notify]);
+
+  const clearNames = useCallback(() => {
+    if (isShuffling || !namesText) return;
+    confirm({
+      title: "名前の消去",
+      message: "入力されている名前一覧をすべて消去します。席に配置されている名前はそのまま残ります。",
+      confirmLabel: "消去する",
+      tone: "danger",
+      onConfirm: () => setNamesText(""),
+    });
+  }, [confirm, isShuffling, namesText]);
+
+  /** 名簿から消えた人を席からも外す。 */
+  const removeStrayNames = useCallback(() => {
+    if (isShuffling || !strayNames.length) return;
+    history.commit(prev => {
+      const layout = { ...prev.layout };
+      const remaining = [...strayNames];
+      for (const [k, v] of Object.entries(layout)) {
+        if (!v) continue;
+        const i = remaining.indexOf(v);
+        if (i >= 0) {
+          remaining.splice(i, 1);
+          layout[k] = null;
+        }
+      }
+      return normalizeBoard({ ...prev, layout });
+    });
+    notify(`名簿にない ${strayNames.length} 名を席から外しました。`, "success");
+  }, [history, isShuffling, notify, strayNames]);
+
+  // --- 名簿の CSV 連携 ---
+  const safeFileName = useCallback(
+    (base: string) => (base.replace(/[\\/:*?"<>|]/g, "_").trim() || "席替え"),
+    []
+  );
+
+  /** 名前一覧を「番号,名前」の CSV で書き出す（Excel でそのまま開ける）。 */
+  const exportNamesCsv = useCallback(() => {
     if (!parsedNames.length) {
-      setAlertMessage("配置する名前が入力されていません。名前を入力するか、サンプル入力を押してください。");
+      setAlertMessage("書き出す名前が入力されていません。");
+      return;
+    }
+    const rows: (string | number)[][] = [
+      ["番号", "名前"],
+      ...parsedNames.map((n, i) => [i + 1, n]),
+    ];
+    const label = savedRosters.find(r => r.id === selectedRosterId)?.name ?? "名簿";
+    downloadTextFile(`${safeFileName(label)}-${fileStamp()}.csv`, toCsv(rows));
+    notify(`名簿 ${parsedNames.length} 名を CSV に書き出しました。`, "success");
+  }, [notify, parsedNames, safeFileName, savedRosters, selectedRosterId]);
+
+  /** CSV / TSV / テキストから名前を読み込む。「番号,名前」形式もそのまま扱える。 */
+  const importNamesFile = useCallback(
+    async (file: File) => {
+      try {
+        const text = await file.text();
+        const names = extractNames(parseDelimited(text));
+        if (!names.length) {
+          setAlertMessage(
+            "ファイルから名前を読み取れませんでした。1 列目に名前、または「名前」「氏名」の見出しがある CSV をお試しください。"
+          );
+          return;
+        }
+        const preview = names.slice(0, 3).join("、");
+        confirm({
+          title: "名簿の読み込み",
+          message: `「${file.name}」から ${names.length} 名を読み込みます（${preview}${names.length > 3 ? " …" : ""}）。現在の名前入力欄は上書きされます。`,
+          confirmLabel: "読み込む",
+          onConfirm: () => {
+            setNamesText(names.join("\n"));
+            setSelectedRosterId(null);
+            notify(`${names.length} 名を読み込みました。`, "success");
+          },
+        });
+      } catch {
+        setAlertMessage("ファイルの読み込みに失敗しました。");
+      }
+    },
+    [confirm, notify]
+  );
+
+  /** 現在の席表をそのままの並びで CSV に書き出す。 */
+  const exportSeatingCsv = useCallback(() => {
+    if (!placedCount) {
+      setAlertMessage("書き出す席配置がありません。先に席替えを実行してください。");
+      return;
+    }
+    const header = ["", ...Array.from({ length: cols }, (_, c) => `${c + 1}列`)];
+    const body = Array.from({ length: rows }, (_, r) => [
+      `${r + 1}行`,
+      ...Array.from({ length: cols }, (_, c) => {
+        const k = seatKey(r, c);
+        if (board.disabled.includes(k)) return "―";
+        return board.layout[k] ?? "";
+      }),
+    ]);
+    const rowsOut: (string | number)[][] = [
+      [customTitle || DEFAULT_TITLE],
+      [`黒板側が ${1} 行目です`, `配置 ${placedCount} 名`],
+      [],
+      header,
+      ...body,
+    ];
+    downloadTextFile(`${safeFileName(customTitle || DEFAULT_TITLE)}-席表-${fileStamp()}.csv`, toCsv(rowsOut));
+    notify("席表を CSV に書き出しました。", "success");
+  }, [board.disabled, board.layout, cols, customTitle, notify, placedCount, rows, safeFileName]);
+
+  // --- 席替えの実行 ---
+  const prefersReducedMotion = () =>
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+
+  const startShuffle = useCallback(() => {
+    if (isShuffling) return;
+    if (!parsedNames.length) {
+      setAlertMessage("配置する名前が入力されていません。名前を入力するか、サンプル名を入力してください。");
       return;
     }
     if (seatDeficit > 0) {
-      setAlertMessage(`有効な席数が足りません。さらに ${seatDeficit} 個の席を増やすか、無効席（通路など）の設定を解除してください。`);
+      setAlertMessage(
+        `有効な席数が ${seatDeficit} 席足りません。席を増やすか、無効席（通路）または固定席の設定を見直してください。`
+      );
       return;
     }
+    if (!shufflePool.length) {
+      setAlertMessage("入力されている全員が固定席にいるため、入れ替える人がいません。固定を解除してからお試しください。");
+      return;
+    }
+    setSelectedSeatKey(null);
+    const finalBoard = assignRandomly(board, parsedNames);
+
+    if (prefersReducedMotion()) {
+      history.commit(finalBoard);
+      notify(`${board.pinned.length ? "固定席を保ったまま " : ""}${shufflePool.length} 名を配置しました。`, "success");
+      return;
+    }
+
     setIsShuffling(true);
-    let cycle = 0;
-    const total = 20;
-    const activeKeys: string[] = [];
-    for (let r = 0; r < rows; r++)
-      for (let c = 0; c < cols; c++) {
-        const k = `r${r}-c${c}`;
-        if (!disabledSeats.includes(k)) activeKeys.push(k);
-      }
-    const finalLayout: Record<string, string | null> = {};
-    for (let r = 0; r < rows; r++)
-      for (let c = 0; c < cols; c++) finalLayout[`r${r}-c${c}`] = null;
-    const sk = shuffleArray(activeKeys);
-    shuffleArray(parsedNames).forEach((name, i) => { if (sk[i]) finalLayout[sk[i]] = name; });
+    const targets = shuffleTargetKeys(board);
+    const pool = shufflePool;
+    let frame = 0;
     if (shuffleTimerRef.current) clearInterval(shuffleTimerRef.current);
     shuffleTimerRef.current = setInterval(() => {
-      cycle++;
-      const tmp: Record<string, string | null> = {};
-      for (let r = 0; r < rows; r++)
-        for (let c = 0; c < cols; c++) tmp[`r${r}-c${c}`] = null;
-      const rk = shuffleArray(activeKeys);
-      parsedNames.forEach((name, i) => { if (rk[i]) tmp[rk[i]] = name; });
-      setSeatingLayout(tmp);
-      if (cycle >= total) {
-        clearInterval(shuffleTimerRef.current!);
+      frame++;
+      if (frame >= SHUFFLE_FRAMES) {
+        if (shuffleTimerRef.current) clearInterval(shuffleTimerRef.current);
         shuffleTimerRef.current = null;
-        setSeatingLayout(finalLayout);
+        setPreviewLayout(null);
         setIsShuffling(false);
+        history.commit(finalBoard);
+        notify(
+          `${pool.length} 名を配置しました。${board.pinned.length ? `（固定席 ${board.pinned.length} 席はそのまま）` : ""}`,
+          "success"
+        );
+        return;
       }
-    }, 75);
-  };
+      // 演出用の仮配置。履歴には積まない。
+      const frameLayout: Record<string, string | null> = {};
+      for (const k of Object.keys(board.layout)) {
+        frameLayout[k] = board.pinned.includes(k) ? board.layout[k] ?? null : null;
+      }
+      const slots = shuffleArray(targets);
+      pool.forEach((name, i) => {
+        if (slots[i]) frameLayout[slots[i]] = name;
+      });
+      setPreviewLayout(frameLayout);
+    }, SHUFFLE_INTERVAL_MS);
+  }, [board, history, isShuffling, notify, parsedNames, seatDeficit, shufflePool]);
 
-  const clearLayout = () => {
+  /** 入力順（出席番号順）に前から詰めて配置する。 */
+  const assignInOrder = useCallback(() => {
     if (isShuffling) return;
-    setSeatingLayout(p => { const n = { ...p }; Object.keys(n).forEach(k => n[k] = null); return n; });
-  };
+    if (!parsedNames.length) {
+      setAlertMessage("配置する名前が入力されていません。");
+      return;
+    }
+    if (seatDeficit > 0) {
+      setAlertMessage(`有効な席数が ${seatDeficit} 席足りません。席を増やしてから、もう一度お試しください。`);
+      return;
+    }
+    const targets = shuffleTargetKeys(board);
+    history.commit(prev => {
+      const layout: Record<string, string | null> = {};
+      for (const k of Object.keys(prev.layout)) {
+        layout[k] = prev.pinned.includes(k) ? prev.layout[k] ?? null : null;
+      }
+      shufflePool.forEach((name, i) => {
+        if (targets[i]) layout[targets[i]] = name;
+      });
+      return { ...prev, layout };
+    });
+    setSelectedSeatKey(null);
+    notify("入力順に前から配置しました。", "success");
+  }, [board, history, isShuffling, notify, parsedNames.length, seatDeficit, shufflePool]);
 
-  const fullReset = () => {
+  const clearLayout = useCallback(() => {
     if (isShuffling) return;
-    setConfirmConfig({
-      message: "席表のサイズ、無効席（通路）の設定、入力された名前、および現在の席配置をすべて初期化します。よろしいですか？",
+    const occupied = Object.values(board.layout).some(Boolean);
+    if (!occupied) return;
+    history.commit(prev => {
+      const layout: Record<string, string | null> = {};
+      for (const k of Object.keys(prev.layout)) layout[k] = null;
+      return { ...prev, layout, pinned: [] };
+    });
+    setSelectedSeatKey(null);
+    notify("席の配置をクリアしました（元に戻すで復元できます）。", "info");
+  }, [board.layout, history, isShuffling, notify]);
+
+  const fullReset = useCallback(() => {
+    if (isShuffling) return;
+    confirm({
+      title: "すべて初期化",
+      message:
+        "席表のサイズ、無効席（通路）と固定席の設定、入力された名前、現在の席配置をすべて初期状態に戻します。保存済みのデータは削除されません。",
+      confirmLabel: "初期化する",
+      tone: "danger",
       onConfirm: () => {
-        setRows(6); setCols(6); setDisabledSeats([]); setNamesText(""); setSelectedResultId(null); setSelectedRosterId(null);
-        const e: Record<string, string | null> = {};
-        for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) e[`r${r}-c${c}`] = null;
-        setSeatingLayout(e);
-        setConfirmConfig(null);
+        history.reset(emptyBoard());
+        setNamesText("");
+        setCustomTitle(DEFAULT_TITLE);
+        setSelectedResultId(null);
+        setSelectedRosterId(null);
+        setSelectedSeatKey(null);
+        clearSession();
+        notify("初期状態に戻しました。", "info");
+      },
+    });
+  }, [confirm, history, isShuffling, notify]);
+
+  // --- ドラッグ＆ドロップ ---
+  const handleDragStart = useCallback(
+    (e: React.DragEvent, key: string) => {
+      if (isShuffling || !board.layout[key]) {
+        e.preventDefault();
+        return;
       }
-    });
-  };
+      setDragPayload({ type: "seat", key });
+      setSelectedSeatKey(null);
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", key);
+    },
+    [board.layout, isShuffling]
+  );
 
-  const handleDragStart = (e: React.DragEvent, key: string) => {
-    if (isShuffling) return;
-    if (!seatingLayout[key]) { e.preventDefault(); return; }
-    setDraggedSeatKey(key);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", key);
-  };
-  const handleDragOver = (e: React.DragEvent, key: string) => {
-    e.preventDefault();
-    if (isShuffling || disabledSeats.includes(key) || draggedSeatKey === key) return;
-    setDragOverSeatKey(key);
-  };
-  const handleDragLeave = () => setDragOverSeatKey(null);
-  const handleDrop = (e: React.DragEvent, targetKey: string) => {
-    e.preventDefault();
-    if (isShuffling || disabledSeats.includes(targetKey)) { setDraggedSeatKey(null); setDragOverSeatKey(null); return; }
-    const src = draggedSeatKey;
-    if (!src || src === targetKey) { setDraggedSeatKey(null); setDragOverSeatKey(null); return; }
-    setSeatingLayout(p => {
-      const n = { ...p }; const a = n[src]; n[src] = n[targetKey]; n[targetKey] = a; return n;
-    });
-    setDraggedSeatKey(null); setDragOverSeatKey(null);
-  };
+  const handleNameDragStart = useCallback(
+    (e: React.DragEvent, name: string) => {
+      if (isShuffling) {
+        e.preventDefault();
+        return;
+      }
+      setDragPayload({ type: "name", name });
+      e.dataTransfer.effectAllowed = "copy";
+      e.dataTransfer.setData("text/plain", name);
+    },
+    [isShuffling]
+  );
 
-  // --- PRESET (LAYOUT ONLY) FUNCTIONS ---
-  const savePreset = () => {
-    if (!presetName.trim()) {
+  const handleDragOver = useCallback(
+    (e: React.DragEvent, key: string) => {
+      if (isShuffling || !dragPayload || board.disabled.includes(key)) return;
+      e.preventDefault();
+      if (dragPayload.type === "seat" && dragPayload.key === key) return;
+      setDragOverSeatKey(key);
+    },
+    [board.disabled, dragPayload, isShuffling]
+  );
+
+  const handleDragLeave = useCallback(() => setDragOverSeatKey(null), []);
+
+  const handleDragEnd = useCallback(() => {
+    setDragPayload(null);
+    setDragOverSeatKey(null);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent, targetKey: string) => {
+      e.preventDefault();
+      const payload = dragPayload;
+      setDragPayload(null);
+      setDragOverSeatKey(null);
+      if (isShuffling || !payload || board.disabled.includes(targetKey)) return;
+      if (payload.type === "seat") swapSeats(payload.key, targetKey);
+      else assignNameToSeat(payload.name, targetKey);
+    },
+    [assignNameToSeat, board.disabled, dragPayload, isShuffling, swapSeats]
+  );
+
+  // --- レイアウト型紙 ---
+  const savePreset = useCallback(() => {
+    const name = presetName.trim();
+    if (!name) {
       setAlertMessage("保存するレイアウト名を入力してください。");
       return;
     }
-    const p: SeatingPreset = {
-      id: Date.now().toString(), name: presetName.trim(), rows, cols,
+    const preset: SeatingPreset = {
+      id: createId(),
+      name,
+      rows,
+      cols,
       disabledSeats: [...disabledSeats],
-      createdAt: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+      createdAt: nowStamp(),
     };
-    const next = [p, ...savedPresets];
-    setSavedPresets(next);
-    localStorage.setItem("seating-presets", JSON.stringify(next));
+    const next = [preset, ...savedPresets];
+    reportSave(savePresets(next), `レイアウト「${name}」を保存しました。`);
     setPresetName("");
-  };
+  }, [cols, disabledSeats, presetName, reportSave, rows, savedPresets]);
 
-  const loadPreset = (p: SeatingPreset) => {
-    if (isShuffling) return;
-    setConfirmConfig({
-      message: `レイアウト「${p.name}」を読み込みます。現在の席配置はリセットされます。よろしいですか？`,
-      onConfirm: () => {
-        setRows(p.rows); setCols(p.cols); setDisabledSeats(p.disabledSeats); setSelectedResultId(null);
-        const f: Record<string, string | null> = {};
-        for (let r = 0; r < p.rows; r++) for (let c = 0; c < p.cols; c++) f[`r${r}-c${c}`] = null;
-        setSeatingLayout(f);
-        setConfirmConfig(null);
-      }
-    });
-  };
+  const loadPreset = useCallback(
+    (p: SeatingPreset) => {
+      if (isShuffling) return;
+      confirm({
+        title: "レイアウトの読み込み",
+        message: `レイアウト「${p.name}」（${p.cols}列×${p.rows}行）を読み込みます。現在の席配置はクリアされます。`,
+        confirmLabel: "読み込む",
+        onConfirm: () => {
+          history.commit(
+            normalizeBoard({
+              rows: p.rows,
+              cols: p.cols,
+              layout: {},
+              disabled: [...p.disabledSeats],
+              pinned: [],
+            })
+          );
+          setSelectedResultId(null);
+          setSelectedSeatKey(null);
+          notify(`レイアウト「${p.name}」を読み込みました。`, "success");
+        },
+      });
+    },
+    [confirm, history, isShuffling, notify]
+  );
 
-  const deletePreset = (id: string, name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setConfirmConfig({
-      message: `保存されたレイアウト「${name}」を完全に削除します。よろしいですか？`,
-      onConfirm: () => {
-        const next = savedPresets.filter(p => p.id !== id);
-        setSavedPresets(next);
-        localStorage.setItem("seating-presets", JSON.stringify(next));
-        setConfirmConfig(null);
-      }
-    });
-  };
+  const deletePreset = useCallback(
+    (id: string, name: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      confirm({
+        title: "レイアウトの削除",
+        message: `保存されたレイアウト「${name}」を削除します。この操作は取り消せません。`,
+        confirmLabel: "削除する",
+        tone: "danger",
+        onConfirm: () => {
+          const next = savedPresets.filter(p => p.id !== id);
+          reportSave(savePresets(next), `レイアウト「${name}」を削除しました。`);
+        },
+      });
+    },
+    [confirm, reportSave, savedPresets]
+  );
 
-  // --- STUDENT ROSTER (名簿) FUNCTIONS ---
-  const saveRoster = () => {
-    if (!rosterName.trim()) {
+  // --- 名簿 ---
+  const saveRoster = useCallback(() => {
+    const name = rosterName.trim();
+    if (!name) {
       setAlertMessage("保存する名簿名を入力してください。");
       return;
     }
     if (!namesText.trim()) {
-      setAlertMessage("保存する名簿（名前一覧）が空欄です。名前を入力してください。");
+      setAlertMessage("名前一覧が空欄です。名前を入力してから保存してください。");
       return;
     }
-    const r: StudentRoster = {
-      id: Date.now().toString(),
-      name: rosterName.trim(),
-      namesText,
-      createdAt: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
-    };
-    const next = [r, ...savedRosters];
-    setSavedRosters(next);
-    localStorage.setItem("seating-rosters", JSON.stringify(next));
-    setSelectedRosterId(r.id);
+    const roster: StudentRoster = { id: createId(), name, namesText, createdAt: nowStamp() };
+    const next = [roster, ...savedRosters];
+    reportSave(saveRosters(next), `名簿「${name}」を保存しました（${parsedNames.length}名）。`);
+    setSelectedRosterId(roster.id);
     setRosterName("");
-  };
+  }, [namesText, parsedNames.length, reportSave, rosterName, savedRosters]);
 
-  const updateRoster = () => {
-    if (!selectedRosterId) return;
+  const updateRoster = useCallback(() => {
     const target = savedRosters.find(x => x.id === selectedRosterId);
     if (!target) return;
-
-    setConfirmConfig({
-      message: `現在の名簿データ（名前一覧）を「${target.name}」に上書き保存（更新）します。よろしいですか？`,
+    confirm({
+      title: "名簿の上書き更新",
+      message: `現在の名前一覧（${parsedNames.length}名）を名簿「${target.name}」に上書き保存します。`,
+      confirmLabel: "上書きする",
       onConfirm: () => {
-        const next = savedRosters.map(x => {
-          if (x.id === selectedRosterId) {
-            return {
-              ...x,
-              namesText,
-              createdAt: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
-            };
-          }
-          return x;
-        });
-        setSavedRosters(next);
-        localStorage.setItem("seating-rosters", JSON.stringify(next));
-        setConfirmConfig(null);
-      }
+        const next = savedRosters.map(x =>
+          x.id === selectedRosterId ? { ...x, namesText, createdAt: nowStamp() } : x
+        );
+        reportSave(saveRosters(next), `名簿「${target.name}」を更新しました。`);
+      },
     });
-  };
+  }, [confirm, namesText, parsedNames.length, reportSave, savedRosters, selectedRosterId]);
 
-  const loadRoster = (r: StudentRoster) => {
-    if (isShuffling) return;
-    setConfirmConfig({
-      message: `名簿「${r.name}」を読み込みます。現在の名前入力エリアは上書きされますが、よろしいですか？`,
-      onConfirm: () => {
-        setNamesText(r.namesText);
-        setSelectedRosterId(r.id);
-        setConfirmConfig(null);
-      }
-    });
-  };
+  const loadRoster = useCallback(
+    (r: StudentRoster) => {
+      if (isShuffling) return;
+      const count = parseNames(r.namesText).length;
+      confirm({
+        title: "名簿の読み込み",
+        message: `名簿「${r.name}」（${count}名）を読み込みます。現在の名前入力欄は上書きされます。`,
+        confirmLabel: "読み込む",
+        onConfirm: () => {
+          setNamesText(r.namesText);
+          setSelectedRosterId(r.id);
+          notify(`名簿「${r.name}」を読み込みました（${count}名）。`, "success");
+        },
+      });
+    },
+    [confirm, isShuffling, notify]
+  );
 
-  const deleteRoster = (id: string, name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setConfirmConfig({
-      message: `保存された名簿「${name}」を完全に削除します。よろしいですか？`,
-      onConfirm: () => {
-        const next = savedRosters.filter(x => x.id !== id);
-        setSavedRosters(next);
-        localStorage.setItem("seating-rosters", JSON.stringify(next));
-        if (selectedRosterId === id) setSelectedRosterId(null);
-        setConfirmConfig(null);
-      }
-    });
-  };
+  const deleteRoster = useCallback(
+    (id: string, name: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      confirm({
+        title: "名簿の削除",
+        message: `保存された名簿「${name}」を削除します。この操作は取り消せません。`,
+        confirmLabel: "削除する",
+        tone: "danger",
+        onConfirm: () => {
+          const next = savedRosters.filter(x => x.id !== id);
+          reportSave(saveRosters(next), `名簿「${name}」を削除しました。`);
+          if (selectedRosterId === id) setSelectedRosterId(null);
+        },
+      });
+    },
+    [confirm, reportSave, savedRosters, selectedRosterId]
+  );
 
-  // --- SEATING RESULT FUNCTIONS ---
-  const saveResult = () => {
-    if (!resultName.trim()) {
+  // --- 配置結果 ---
+  const saveResult = useCallback(() => {
+    const name = resultName.trim();
+    if (!name) {
       setAlertMessage("保存する配置結果の名前を入力してください。");
       return;
     }
-    const r: SeatingResult = {
-      id: Date.now().toString(),
-      name: resultName.trim(),
-      rows, cols,
+    const result: SeatingResult = {
+      id: createId(),
+      name,
+      rows,
+      cols,
       disabledSeats: [...disabledSeats],
-      seatingLayout: { ...seatingLayout },
+      pinnedSeats: [...pinnedSeats],
+      seatingLayout: { ...board.layout },
       namesText,
       customTitle,
-      createdAt: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+      createdAt: nowStamp(),
     };
-    const next = [r, ...savedResults];
-    setSavedResults(next);
-    localStorage.setItem("seating-results", JSON.stringify(next));
-    setSelectedResultId(r.id);
+    const next = [result, ...savedResults];
+    reportSave(saveResults(next), `配置結果「${name}」を保存しました。`);
+    setSelectedResultId(result.id);
     setResultName("");
-  };
+  }, [
+    board.layout,
+    cols,
+    customTitle,
+    disabledSeats,
+    namesText,
+    pinnedSeats,
+    reportSave,
+    resultName,
+    rows,
+    savedResults,
+  ]);
 
-  const updateResult = () => {
-    if (!selectedResultId) return;
+  const updateResult = useCallback(() => {
     const target = savedResults.find(x => x.id === selectedResultId);
     if (!target) return;
-
-    setConfirmConfig({
-      message: `現在の席配置を「${target.name}」に上書き保存（更新）します。よろしいですか？`,
+    confirm({
+      title: "配置結果の上書き更新",
+      message: `現在の席表を配置結果「${target.name}」に上書き保存します。`,
+      confirmLabel: "上書きする",
       onConfirm: () => {
-        const next = savedResults.map(x => {
-          if (x.id === selectedResultId) {
-            return {
-              ...x,
-              rows, cols,
-              disabledSeats: [...disabledSeats],
-              seatingLayout: { ...seatingLayout },
-              namesText,
-              customTitle,
-              createdAt: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
-            };
-          }
-          return x;
+        const next = savedResults.map(x =>
+          x.id === selectedResultId
+            ? {
+                ...x,
+                rows,
+                cols,
+                disabledSeats: [...disabledSeats],
+                pinnedSeats: [...pinnedSeats],
+                seatingLayout: { ...board.layout },
+                namesText,
+                customTitle,
+                createdAt: nowStamp(),
+              }
+            : x
+        );
+        reportSave(saveResults(next), `配置結果「${target.name}」を更新しました。`);
+      },
+    });
+  }, [
+    board.layout,
+    cols,
+    confirm,
+    customTitle,
+    disabledSeats,
+    namesText,
+    pinnedSeats,
+    reportSave,
+    rows,
+    savedResults,
+    selectedResultId,
+  ]);
+
+  const loadResult = useCallback(
+    (r: SeatingResult) => {
+      if (isShuffling) return;
+      confirm({
+        title: "配置結果の読み込み",
+        message: `配置結果「${r.name}」を読み込みます。現在の席表と名前一覧は上書きされます。`,
+        confirmLabel: "読み込む",
+        onConfirm: () => {
+          history.commit(
+            normalizeBoard({
+              rows: r.rows,
+              cols: r.cols,
+              layout: { ...r.seatingLayout },
+              disabled: [...r.disabledSeats],
+              pinned: [...(r.pinnedSeats ?? [])],
+            })
+          );
+          setNamesText(r.namesText);
+          setCustomTitle(r.customTitle || DEFAULT_TITLE);
+          setSelectedResultId(r.id);
+          setSelectedRosterId(null);
+          setSelectedSeatKey(null);
+          notify(`配置結果「${r.name}」を読み込みました。`, "success");
+        },
+      });
+    },
+    [confirm, history, isShuffling, notify]
+  );
+
+  const deleteResult = useCallback(
+    (id: string, name: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      confirm({
+        title: "配置結果の削除",
+        message: `保存された配置結果「${name}」を削除します。この操作は取り消せません。`,
+        confirmLabel: "削除する",
+        tone: "danger",
+        onConfirm: () => {
+          const next = savedResults.filter(p => p.id !== id);
+          reportSave(saveResults(next), `配置結果「${name}」を削除しました。`);
+          if (selectedResultId === id) setSelectedResultId(null);
+        },
+      });
+    },
+    [confirm, reportSave, savedResults, selectedResultId]
+  );
+
+  // --- バックアップ（書き出し・読み込み） ---
+  const savedTotal = savedPresets.length + savedRosters.length + savedResults.length;
+
+  const exportBackup = useCallback(() => {
+    if (!savedTotal) {
+      setAlertMessage("書き出せる保存データがありません。レイアウト・名簿・配置結果のいずれかを保存してからお試しください。");
+      return;
+    }
+    const backup: BackupFile = {
+      app: "seating-chart",
+      version: 1,
+      exportedAt: nowStamp(),
+      presets: savedPresets,
+      rosters: savedRosters,
+      results: savedResults,
+    };
+    try {
+      downloadTextFile(
+        `席替えシステム-バックアップ-${fileStamp()}.json`,
+        JSON.stringify(backup, null, 2),
+        "application/json"
+      );
+      notify(`保存データ ${savedTotal} 件をファイルに書き出しました。`, "success");
+    } catch {
+      setAlertMessage("ファイルの書き出しに失敗しました。");
+    }
+  }, [notify, savedPresets, savedResults, savedRosters, savedTotal]);
+
+  const applyImport = useCallback(
+    (data: Omit<BackupFile, "app" | "version" | "exportedAt">, mode: "merge" | "replace") => {
+      const merge = <T extends { id: string }>(current: T[], incoming: T[]) => {
+        const ids = new Set(current.map(x => x.id));
+        return [...incoming.filter(x => !ids.has(x.id)), ...current];
+      };
+      const presets = mode === "replace" ? data.presets : merge(savedPresets, data.presets);
+      const rosters = mode === "replace" ? data.rosters : merge(savedRosters, data.rosters);
+      const results = mode === "replace" ? data.results : merge(savedResults, data.results);
+      const ok =
+        savePresets(presets).ok && saveRosters(rosters).ok && saveResults(results).ok;
+      if (ok) {
+        notify(
+          `読み込みました（レイアウト${presets.length}件・名簿${rosters.length}件・配置結果${results.length}件）。`,
+          "success"
+        );
+      } else {
+        setAlertMessage("読み込んだデータの保存に失敗しました。ブラウザの保存容量をご確認ください。");
+      }
+    },
+    [notify, savedPresets, savedResults, savedRosters]
+  );
+
+  const importBackup = useCallback(
+    async (file: File) => {
+      try {
+        const text = await file.text();
+        const parsed = parseBackup(JSON.parse(text));
+        if (!parsed) {
+          setAlertMessage("このファイルは席替えシステムのバックアップではないようです。書き出した JSON ファイルを選んでください。");
+          return;
+        }
+        const count = parsed.presets.length + parsed.rosters.length + parsed.results.length;
+        if (!count) {
+          setAlertMessage("ファイルに読み込めるデータが含まれていませんでした。");
+          return;
+        }
+        confirm({
+          title: "バックアップの読み込み",
+          message: `ファイルから ${count} 件のデータを読み込みます。\n「追加する」を選ぶと、いまの保存データを残したまま追加します。既存のデータを置き換えたい場合は、先に不要なデータを削除してください。`,
+          confirmLabel: "追加する",
+          onConfirm: () => applyImport(parsed, "merge"),
         });
-        setSavedResults(next);
-        localStorage.setItem("seating-results", JSON.stringify(next));
-        setConfirmConfig(null);
+      } catch {
+        setAlertMessage("ファイルの読み込みに失敗しました。JSON ファイルが壊れていないかご確認ください。");
       }
-    });
-  };
+    },
+    [applyImport, confirm]
+  );
 
-  const loadResult = (r: SeatingResult) => {
-    if (isShuffling) return;
-    setConfirmConfig({
-      message: `配置結果「${r.name}」を読み込みます。現在の席表および入力された名前一覧が上書きされます。よろしいですか？`,
+  const clearAllSavedData = useCallback(() => {
+    if (!savedTotal) return;
+    confirm({
+      title: "保存データの全削除",
+      message: `保存されているレイアウト・名簿・配置結果 ${savedTotal} 件すべてを削除します。この操作は取り消せません。必要であれば、先にバックアップを書き出してください。`,
+      confirmLabel: "すべて削除",
+      tone: "danger",
       onConfirm: () => {
-        setRows(r.rows); setCols(r.cols); setDisabledSeats(r.disabledSeats);
-        setNamesText(r.namesText); setSeatingLayout(r.seatingLayout);
-        setCustomTitle(r.customTitle); setSelectedResultId(r.id);
-        // Find if this loaded namesText matches an existing Roster to set selectedRosterId, or just null out.
+        savePresets([]);
+        saveRosters([]);
+        saveResults([]);
+        setSelectedResultId(null);
         setSelectedRosterId(null);
-        setConfirmConfig(null);
-      }
+        notify("保存データをすべて削除しました。", "info");
+      },
     });
-  };
+  }, [confirm, notify, savedTotal]);
 
-  const deleteResult = (id: string, name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setConfirmConfig({
-      message: `保存された配置結果「${name}」を完全に削除します。よろしいですか？`,
-      onConfirm: () => {
-        const next = savedResults.filter(p => p.id !== id);
-        setSavedResults(next);
-        localStorage.setItem("seating-results", JSON.stringify(next));
-        if (selectedResultId === id) setSelectedResultId(null);
-        setConfirmConfig(null);
+  // --- 履歴 ---
+  const undo = useCallback(() => {
+    if (isShuffling || !history.canUndo) return;
+    history.undo();
+    setSelectedSeatKey(null);
+  }, [history, isShuffling]);
+
+  const redo = useCallback(() => {
+    if (isShuffling || !history.canRedo) return;
+    history.redo();
+    setSelectedSeatKey(null);
+  }, [history, isShuffling]);
+
+  // --- キーボードショートカット ---
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const typing =
+        !!target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (e.key === "Escape") {
+        if (selectedSeatKey) setSelectedSeatKey(null);
+        return;
       }
-    });
-  };
-
-  const getAvatarColors = (name: string): { bg: string; text: string } => {
-    if (!name) return { bg: "bg-slate-100", text: "text-slate-700" };
-    let h = 0;
-    for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
-    const c = [
-      { bg: "bg-blue-100", text: "text-blue-700" }, { bg: "bg-indigo-100", text: "text-indigo-700" },
-      { bg: "bg-emerald-100", text: "text-emerald-700" }, { bg: "bg-violet-100", text: "text-violet-700" },
-      { bg: "bg-amber-100", text: "text-amber-700" }, { bg: "bg-sky-100", text: "text-sky-700" },
-      { bg: "bg-slate-100", text: "text-slate-700" }
-    ];
-    return c[Math.abs(h) % c.length];
-  };
-
-  const getInitial = (name: string) => name ? name.replace(/\s+/g, "").charAt(0) : "";
+      if (typing || !(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [redo, selectedSeatKey, undo]);
 
   return {
-    rows, setRows, cols, setCols, namesText, setNamesText, seatingLayout, setSeatingLayout,
-    disabledSeats, presetName, setPresetName, rosterName, setRosterName, resultName, setResultName,
-    savedPresets, savedRosters, savedResults,
-    selectedResultId, setSelectedResultId, selectedRosterId, setSelectedRosterId,
-    presetTab, setPresetTab, isShuffling,
-    draggedSeatKey, dragOverSeatKey, customTitle, setCustomTitle,
-    parsedNames, activeSeatsCount, studentCount, seatDeficit,
-    alertMessage, setAlertMessage, confirmConfig, setConfirmConfig,
-    toggleSeatDisabled, fillSampleNames, startShuffle, clearLayout, fullReset,
-    handleDragStart, handleDragOver, handleDragLeave, handleDrop,
-    savePreset, loadPreset, deletePreset,
-    saveRoster, updateRoster, loadRoster, deleteRoster,
-    saveResult, updateResult, loadResult, deleteResult,
-    getAvatarColors, getInitial,
+    // 席表の状態
+    board,
+    rows,
+    cols,
+    setRows,
+    setCols,
+    disabledSeats,
+    pinnedSeats,
+    seatingLayout: displayLayout,
+    namesText,
+    setNamesText,
+    customTitle,
+    setCustomTitle,
+    isRestored,
+
+    // 保存データ
+    presetName,
+    setPresetName,
+    rosterName,
+    setRosterName,
+    resultName,
+    setResultName,
+    savedPresets,
+    savedRosters,
+    savedResults,
+    savedTotal,
+    selectedResultId,
+    setSelectedResultId,
+    selectedRosterId,
+    setSelectedRosterId,
+    presetTab,
+    setPresetTab,
+
+    // 操作の状態
+    isShuffling,
+    dragPayload,
+    dragOverSeatKey,
+    selectedSeatKey,
+    clearSelection,
+
+    // 集計
+    parsedNames,
+    duplicates,
+    totalSeats,
+    activeSeatsCount,
+    pinnedCount,
+    shuffleSeatCount,
+    studentCount,
+    placedCount,
+    unassignedNames,
+    strayNames,
+    seatDeficit,
+
+    // 通知・ダイアログ
+    toasts,
+    dismissToast,
+    notify,
+    alertMessage,
+    closeAlert,
+    confirmConfig,
+    closeConfirm,
+
+    // 操作
+    toggleSeatDisabled,
+    togglePinned,
+    removeFromSeat,
+    swapSeats,
+    assignNameToSeat,
+    placeNameInFirstVacancy,
+    handleSeatActivate,
+    fillSampleNames,
+    clearNames,
+    removeStrayNames,
+    startShuffle,
+    assignInOrder,
+    clearLayout,
+    fullReset,
+
+    // ドラッグ＆ドロップ
+    handleDragStart,
+    handleNameDragStart,
+    handleDragOver,
+    handleDragLeave,
+    handleDragEnd,
+    handleDrop,
+
+    // 保存データの操作
+    savePreset,
+    loadPreset,
+    deletePreset,
+    saveRoster,
+    updateRoster,
+    loadRoster,
+    deleteRoster,
+    saveResult,
+    updateResult,
+    loadResult,
+    deleteResult,
+    exportBackup,
+    importBackup,
+    clearAllSavedData,
+    exportNamesCsv,
+    importNamesFile,
+    exportSeatingCsv,
+
+    // 履歴
+    undo,
+    redo,
+    canUndo: history.canUndo && !isShuffling,
+    canRedo: history.canRedo && !isShuffling,
+
+    // 表示ヘルパー
+    getAvatarColors,
+    getInitial,
+    formatStamp,
+    MIN_DIM,
+    MAX_DIM,
   };
 }
 

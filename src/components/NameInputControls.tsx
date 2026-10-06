@@ -1,52 +1,100 @@
 "use client";
-import React from "react";
-import { SeatingHook } from "@/app/useSeating";
+import React, { useRef } from "react";
+import type { SeatingHook } from "@/app/useSeating";
+import Panel from "./ui/Panel";
+import { DownloadIcon, UploadIcon, UsersIcon } from "./ui/Icons";
 
 interface NameInputControlsProps {
   s: SeatingHook;
 }
 
 export default function NameInputControls({ s }: NameInputControlsProps) {
-  const { namesText, setNamesText, isShuffling, studentCount, fillSampleNames } = s;
+  const {
+    namesText,
+    setNamesText,
+    isShuffling,
+    studentCount,
+    duplicates,
+    fillSampleNames,
+    clearNames,
+    exportNamesCsv,
+    importNamesFile,
+  } = s;
+
+  const fileRef = useRef<HTMLInputElement>(null);
 
   return (
-    <section className="flat-panel p-5">
-      <div className="flex justify-between items-center mb-3">
-        <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4.5 w-4.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-          </svg>
-          名前の入力
-        </h2>
-        <span className="text-[11px] px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-700 rounded-full font-bold">
-          {studentCount}名
-        </span>
-      </div>
+    <Panel
+      icon={<UsersIcon />}
+      title="名前の入力"
+      aside={<span className="chip">{studentCount}名</span>}
+      className="no-print"
+    >
+      <label htmlFor="names-input" className="sr-only">
+        名前一覧（1行に1名）
+      </label>
       <textarea
+        id="names-input"
         value={namesText}
         onChange={e => setNamesText(e.target.value)}
         disabled={isShuffling}
-        className="w-full h-44 px-3 py-2 bg-white border border-slate-200 rounded text-slate-700 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400 transition-all placeholder:text-slate-400 resize-none font-sans"
-        placeholder={"名前を1行に1人ずつ入力してください。\n例:\n佐藤 健\n鈴木 一郎\n高橋 美咲"}
+        rows={9}
+        className="field resize-y leading-relaxed"
+        placeholder={"1行に1名ずつ\n佐藤 健\n鈴木 一郎"}
       />
-      <div className="flex gap-2 mt-3">
+
+      {duplicates.length > 0 && (
+        <p className="hint mt-2 text-[var(--pin)]">
+          同じ名前が複数あります（{duplicates.slice(0, 3).join("、")}
+          {duplicates.length > 3 ? " …" : ""}）
+        </p>
+      )}
+
+      <div className="flex flex-wrap gap-1.5 mt-3">
         <button
           type="button"
-          onClick={fillSampleNames}
+          className="btn btn-sm"
+          onClick={() => fileRef.current?.click()}
           disabled={isShuffling}
-          className="flex-1 py-2 text-xs font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 cursor-pointer disabled:opacity-50 select-none"
+          title="CSV / TSV / テキストから名前を読み込みます"
         >
-          サンプル名を入力
+          <UploadIcon className="w-3.5 h-3.5" />
+          CSV読込
         </button>
         <button
           type="button"
-          onClick={() => setNamesText("")}
-          disabled={isShuffling || !namesText}
-          className="px-3 py-2 text-xs font-bold rounded bg-white border border-slate-200 hover:bg-slate-50 text-rose-600 cursor-pointer disabled:opacity-50 select-none"
+          className="btn btn-sm"
+          onClick={exportNamesCsv}
+          disabled={!studentCount}
+          title="名前一覧を CSV で書き出します（Excel 対応）"
         >
-          クリア
+          <DownloadIcon className="w-3.5 h-3.5" />
+          CSV書出
+        </button>
+        <button type="button" className="btn btn-sm" onClick={fillSampleNames} disabled={isShuffling}>
+          サンプル
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm btn-danger ml-auto"
+          onClick={clearNames}
+          disabled={isShuffling || !namesText}
+        >
+          消去
         </button>
       </div>
-    </section>
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".csv,.tsv,.txt,text/csv,text/plain"
+        className="hidden"
+        onChange={e => {
+          const file = e.target.files?.[0];
+          if (file) importNamesFile(file);
+          e.target.value = "";
+        }}
+      />
+    </Panel>
   );
 }

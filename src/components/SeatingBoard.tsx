@@ -1,9 +1,20 @@
 "use client";
-import React from "react";
-import { SeatingHook } from "@/app/useSeating";
+import React, { useCallback, useRef, useState } from "react";
+import type { SeatingHook } from "@/app/useSeating";
+import { seatKey } from "@/lib/seating";
+import { CloseIcon, PinIcon } from "./ui/Icons";
 
 interface SeatingBoardProps {
   s: SeatingHook;
+}
+
+/** 列数が多いときは名前を少し小さくして、カード内に収める。 */
+function seatFontSize(cols: number): string {
+  if (cols <= 5) return "14px";
+  if (cols === 6) return "13px";
+  if (cols <= 8) return "12px";
+  if (cols <= 10) return "11px";
+  return "10px";
 }
 
 export default function SeatingBoard({ s }: SeatingBoardProps) {
@@ -11,124 +22,239 @@ export default function SeatingBoard({ s }: SeatingBoardProps) {
     rows,
     cols,
     disabledSeats,
+    pinnedSeats,
     seatingLayout,
-    setSeatingLayout,
     isShuffling,
-    draggedSeatKey,
+    dragPayload,
     dragOverSeatKey,
-    toggleSeatDisabled,
+    selectedSeatKey,
+    handleSeatActivate,
+    togglePinned,
+    removeFromSeat,
     handleDragStart,
     handleDragOver,
     handleDragLeave,
+    handleDragEnd,
     handleDrop,
     getAvatarColors,
-    getInitial
+    getInitial,
   } = s;
 
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [focusKey, setFocusKey] = useState(seatKey(0, 0));
+
+  const moveFocus = useCallback(
+    (r: number, c: number) => {
+      const nr = Math.min(rows - 1, Math.max(0, r));
+      const nc = Math.min(cols - 1, Math.max(0, c));
+      const key = seatKey(nr, nc);
+      setFocusKey(key);
+      boardRef.current?.querySelector<HTMLElement>(`[data-seat="${key}"]`)?.focus();
+    },
+    [cols, rows]
+  );
+
+  const onSeatKeyDown = useCallback(
+    (e: React.KeyboardEvent, r: number, c: number) => {
+      const key = seatKey(r, c);
+      switch (e.key) {
+        case "ArrowUp":
+          e.preventDefault();
+          moveFocus(r - 1, c);
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          moveFocus(r + 1, c);
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          moveFocus(r, c - 1);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          moveFocus(r, c + 1);
+          break;
+        case "Home":
+          e.preventDefault();
+          moveFocus(r, 0);
+          break;
+        case "End":
+          e.preventDefault();
+          moveFocus(r, cols - 1);
+          break;
+        case "Enter":
+        case " ":
+          e.preventDefault();
+          handleSeatActivate(key);
+          break;
+        case "Delete":
+        case "Backspace":
+          if (seatingLayout[key]) {
+            e.preventDefault();
+            removeFromSeat(key);
+          }
+          break;
+        case "p":
+        case "P":
+          if (seatingLayout[key]) {
+            e.preventDefault();
+            togglePinned(key);
+          }
+          break;
+        default:
+          break;
+      }
+    },
+    [cols, handleSeatActivate, moveFocus, removeFromSeat, seatingLayout, togglePinned]
+  );
+
+  const seatLabel = (r: number, c: number, name: string | null, state: string) =>
+    `${r + 1}行${c + 1}列 ${name ?? state}`;
+
   return (
-    <div className="flat-panel p-6 print:p-0 print:border-none print:shadow-none animate-fade-in">
-      <div className="w-full py-1.5 bg-slate-100 border border-slate-200 rounded text-center text-xs font-bold text-slate-500 tracking-wider mb-6 select-none print:bg-slate-50 print:border-slate-300 print:text-slate-600">
-        【 黒 板 】
-      </div>
+    <div className="panel p-5 print:p-0">
+      <div className="blackboard mb-5">黒 板</div>
+
       <div
-        className="grid gap-3 print-grid"
+        ref={boardRef}
+        role="grid"
+        aria-label="席表"
+        aria-describedby="board-usage"
+        className="board-grid"
         style={{
           gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-          ["--print-cols" as string]: cols
+          ["--seat-font" as string]: seatFontSize(cols),
         }}
       >
-        {Array.from({ length: rows }).map((_, ri) =>
-          Array.from({ length: cols }).map((_, ci) => {
-            const key = `r${ri}-c${ci}`;
-            const disabled = disabledSeats.includes(key);
-            const name = seatingLayout[key];
-            const isOver = dragOverSeatKey === key;
-            const isDragging = draggedSeatKey === key;
+        {Array.from({ length: rows }).map((_, r) => (
+          // display:contents で、意味上の行を保ちながら 1 つの CSS グリッドとして並べる。
+          <div key={`row-${r}`} role="row" style={{ display: "contents" }}>
+            {Array.from({ length: cols }).map((_, c) => {
+              const key = seatKey(r, c);
+              const name = seatingLayout[key] ?? null;
+              const isDisabled = disabledSeats.includes(key);
+              const isPinned = pinnedSeats.includes(key);
+              const isSelected = selectedSeatKey === key;
+              const isOver = dragOverSeatKey === key;
+              const isDragging = dragPayload?.type === "seat" && dragPayload.key === key;
 
-            // Render Aisle (Disabled seat)
-            if (disabled) return (
-              <div
-                key={key}
-                onClick={() => toggleSeatDisabled(ri, ci)}
-                title="クリックで有効な席に変更"
-                className="aspect-[4/3] rounded flex items-center justify-center border border-dashed border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-100 transition-all select-none group print-desk-disabled"
-              >
-                <span className="opacity-0 group-hover:opacity-100 text-slate-400 text-[10px] transition-opacity">有効化</span>
-              </div>
-            );
+              const classes = [
+                "seat",
+                isDisabled ? "seat-disabled" : name ? "" : "seat-empty",
+                isSelected ? "is-selected" : "",
+                isOver ? "is-over" : "",
+                isDragging ? "is-dragging" : "",
+                isPinned ? "is-pinned" : "",
+                isShuffling && name ? "is-shuffling" : "",
+              ]
+                .filter(Boolean)
+                .join(" ");
 
-            // Render Empty seat
-            if (!name) return (
-              <div
-                key={key}
-                onDragOver={e => handleDragOver(e, key)}
-                onDragLeave={handleDragLeave}
-                onDrop={e => handleDrop(e, key)}
-                onClick={() => toggleSeatDisabled(ri, ci)}
-                title="クリックで無効化（通路設定）"
-                className={`aspect-[4/3] rounded flex flex-col items-center justify-center border border-dashed transition-all select-none cursor-pointer group print-desk ${
-                  isOver ? "border-blue-500 bg-blue-50/50" : "border-slate-200 hover:border-rose-300 hover:bg-rose-50/30 bg-white"
-                }`}
-              >
-                <span className="text-[11px] font-medium text-slate-400 group-hover:text-rose-500 group-hover:hidden print:group-hover:block">空席</span>
-                <span className="hidden group-hover:inline text-[9px] font-bold text-rose-500 print:group-hover:hidden">無効化</span>
-              </div>
-            );
+              const title = isDisabled
+                ? "クリックで席に戻す"
+                : name
+                  ? selectedSeatKey
+                    ? "クリックで選択中の席と入れ替え"
+                    : "クリックで選択 / ドラッグで入れ替え"
+                  : selectedSeatKey
+                    ? "クリックでここへ移動"
+                    : "クリックで通路にする";
 
-            // Render Occupied seat card
-            const av = getAvatarColors(name);
-            return (
-              <div
-                key={key}
-                draggable={!isShuffling}
-                onDragStart={e => handleDragStart(e, key)}
-                onDragOver={e => handleDragOver(e, key)}
-                onDragLeave={handleDragLeave}
-                onDrop={e => handleDrop(e, key)}
-                onDoubleClick={() => {
-                  if (!isShuffling) setSeatingLayout(p => ({ ...p, [key]: null }));
-                }}
-                className={`aspect-[4/3] relative rounded border flex flex-col justify-between p-2 select-none transition-all group bg-white print-desk ${
-                  isShuffling
-                    ? "animate-shuffle-active border-slate-200"
-                    : "hover:bg-slate-50 border-slate-200 hover:border-slate-300"
-                } ${isDragging ? "opacity-30 scale-95 border-dashed border-blue-500" : ""} ${
-                  isOver ? "border-blue-500 bg-blue-50/80" : ""
-                }`}
-                style={{ cursor: isShuffling ? "wait" : "grab" }}
-                title="ドラッグで入れ替え / ダブルクリックで解除"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1">
-                    <div className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-extrabold shrink-0 ${av.bg} ${av.text}`}>
-                      {getInitial(name)}
-                    </div>
-                  </div>
-                  <span className="text-[8px] font-bold text-slate-300 font-mono">{ri + 1}-{ci + 1}</span>
+              return (
+                <div
+                  key={key}
+                  data-seat={key}
+                  role="gridcell"
+                  tabIndex={focusKey === key ? 0 : -1}
+                  aria-label={seatLabel(
+                    r,
+                    c,
+                    name,
+                    isDisabled ? "通路（席なし）" : "空席"
+                  )}
+                  aria-selected={isSelected}
+                  aria-disabled={isDisabled}
+                  draggable={!!name && !isShuffling}
+                  onFocus={() => setFocusKey(key)}
+                  onKeyDown={e => onSeatKeyDown(e, r, c)}
+                  onClick={() => handleSeatActivate(key)}
+                  onDragStart={e => handleDragStart(e, key)}
+                  onDragEnd={handleDragEnd}
+                  onDragOver={e => handleDragOver(e, key)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={e => handleDrop(e, key)}
+                  className={classes}
+                  title={title}
+                  style={{ cursor: isShuffling ? "wait" : undefined }}
+                >
+                  {isDisabled ? (
+                    <span className="seat-mark">通路</span>
+                  ) : name ? (
+                    <>
+                      <span className="seat-coord" aria-hidden="true">
+                        {r + 1}-{c + 1}
+                      </span>
+                      {isPinned && (
+                        <span className="seat-pin" aria-hidden="true">
+                          <PinIcon />
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        {cols <= 8 && (
+                          <span
+                            aria-hidden="true"
+                            className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${getAvatarColors(name).bg} ${getAvatarColors(name).text}`}
+                          >
+                            {getInitial(name)}
+                          </span>
+                        )}
+                        <span className="seat-name">{name}</span>
+                      </span>
+                      {!isShuffling && (
+                        <span className="seat-tools no-print">
+                          <button
+                            type="button"
+                            className="seat-tool is-pin"
+                            aria-pressed={isPinned}
+                            aria-label={isPinned ? "固定を解除" : "この席に固定（席替えしても動かさない）"}
+                            title={isPinned ? "固定を解除" : "この席に固定"}
+                            onClick={e => {
+                              e.stopPropagation();
+                              togglePinned(key);
+                            }}
+                          >
+                            <PinIcon />
+                          </button>
+                          <button
+                            type="button"
+                            className="seat-tool is-danger"
+                            aria-label={`${name} を席から外す`}
+                            title="席から外す"
+                            onClick={e => {
+                              e.stopPropagation();
+                              removeFromSeat(key);
+                            }}
+                          >
+                            <CloseIcon />
+                          </button>
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="seat-mark">
+                      {dragPayload || selectedSeatKey ? "ここへ" : "通路に"}
+                    </span>
+                  )}
                 </div>
-                <div className="flex-1 flex items-center justify-center min-w-0 px-0.5">
-                  <p className="text-xs font-bold text-slate-800 truncate max-w-full">{name}</p>
-                </div>
-                <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity no-print">
-                  <button
-                    type="button"
-                    onClick={e => {
-                      e.stopPropagation();
-                      if (!isShuffling) setSeatingLayout(p => ({ ...p, [key]: null }));
-                    }}
-                    className="p-0.5 rounded-full bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 cursor-pointer animate-fade-in"
-                    title="席から外す"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            );
-          })
-        )}
+              );
+            })}
+          </div>
+        ))}
       </div>
+
+      <p id="board-usage" className="sr-only">
+        矢印キーで席を移動、Enter で選択して別の席と入れ替え、Delete で席から外す、P で固定の切り替えができます。
+      </p>
     </div>
   );
 }
